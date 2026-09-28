@@ -1,28 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { modelsFromSdk } from "../../dist/models.js";
-import { getCursorModels, refreshCursorModels } from "../../dist/models.js";
+import {
+  getCursorModels,
+  isThinkingParameter,
+  modelsFromSdk,
+  refreshCursorModels,
+} from "../../dist/models.js";
 import { setCursorSdkOverridesForTests } from "../../dist/sdk.js";
 
-test("SDK preset variants map to stable OpenCode variant ids", () => {
-  const [model] = modelsFromSdk([{
-    id: "cursor-model",
-    displayName: "Cursor Model",
-    variants: [
-      { displayName: "High Thinking", params: [{ id: "thinking", value: "high" }], isDefault: true },
-      { displayName: "Fast", params: [{ id: "speed", value: "fast" }] },
-    ],
-  }]);
-  assert.equal(model.id, "cursor-model");
-  assert.deepEqual(model.defaultSelection, {
-    id: "cursor-model",
-    params: [{ id: "thinking", value: "high" }],
-  });
-  assert.deepEqual(model.variants["high-thinking"].params, [{ id: "thinking", value: "high" }]);
-  assert.deepEqual(model.variants.fast.params, [{ id: "speed", value: "fast" }]);
+test("recognizes reasoning controls but rejects unrelated Cursor parameters", () => {
+  assert.equal(isThinkingParameter({ id: "reasoning_effort", displayName: "Reasoning Effort" }), true);
+  assert.equal(isThinkingParameter({ id: "reasoning", displayName: "Reasoning" }), true);
+  assert.equal(isThinkingParameter({ id: "effort", displayName: "Effort" }), true);
+  assert.equal(isThinkingParameter({ id: "thinking_level", displayName: "Thinking Level" }), true);
+
+  assert.equal(isThinkingParameter({ id: "fast", displayName: "Fast" }), false);
+  assert.equal(isThinkingParameter({ id: "context", displayName: "Context" }), false);
+  assert.equal(isThinkingParameter({ id: "optimize_for", displayName: "Optimize For" }), false);
+  assert.equal(isThinkingParameter({ id: "model", displayName: "GPT-5.6 Luna" }), false);
 });
 
-test("SDK parameter values become variants even without preset variants", () => {
+test("reasoning parameter values become OpenCode thinking variants", () => {
   const [model] = modelsFromSdk([{
     id: "reasoning-model",
     displayName: "Reasoning Model",
@@ -41,10 +39,43 @@ test("SDK parameter values become variants even without preset variants", () => 
   assert.deepEqual(model.variants.low.params, [{ id: "reasoning_effort", value: "low" }]);
   assert.deepEqual(model.variants.medium.params, [{ id: "reasoning_effort", value: "medium" }]);
   assert.deepEqual(model.variants.high.params, [{ id: "reasoning_effort", value: "high" }]);
-  assert.deepEqual(model.defaultSelection.params, [{ id: "reasoning_effort", value: "low" }]);
 });
 
-test("parameter-derived variants preserve defaults for other parameters", () => {
+test("unrelated parameters never pollute the Thinking menu", () => {
+  const [model] = modelsFromSdk([{
+    id: "parameterized-model",
+    displayName: "Parameterized Model",
+    parameters: [
+      {
+        id: "fast",
+        displayName: "Fast",
+        values: [{ value: "false" }, { value: "true", displayName: "Fast" }],
+      },
+      {
+        id: "context",
+        displayName: "Context",
+        values: [{ value: "default" }, { value: "max", displayName: "Max" }],
+      },
+      {
+        id: "optimize_for",
+        displayName: "Optimize For",
+        values: [
+          { value: "cost", displayName: "Cost" },
+          { value: "balanced", displayName: "Balance" },
+          { value: "intelligence", displayName: "Intelligence" },
+        ],
+      },
+    ],
+    variants: [
+      { displayName: "Fast", params: [{ id: "fast", value: "true" }] },
+      { displayName: "Max Context", params: [{ id: "context", value: "max" }] },
+    ],
+  }]);
+
+  assert.deepEqual(model.variants, {});
+});
+
+test("reasoning variants preserve unrelated default parameter values", () => {
   const [model] = modelsFromSdk([{
     id: "multi-param-model",
     displayName: "Multi Param Model",
@@ -64,35 +95,51 @@ test("parameter-derived variants preserve defaults for other parameters", () => 
     { id: "fast", value: "false" },
     { id: "reasoning_effort", value: "high" },
   ]);
-  assert.deepEqual(model.variants.fast.params, [
-    { id: "reasoning_effort", value: "low" },
-    { id: "fast", value: "true" },
-  ]);
 });
 
-test("preset variants remain authoritative and duplicate parameter selections are not repeated", () => {
+test("reasoning preset labels come from the actual reasoning choice", () => {
   const [model] = modelsFromSdk([{
-    id: "preset-model",
-    displayName: "Preset Model",
+    id: "gpt-5-6-luna",
+    displayName: "GPT-5.6 Luna",
     parameters: [{
       id: "reasoning_effort",
-      values: [{ value: "low" }, { value: "high" }],
+      displayName: "Reasoning Effort",
+      values: [
+        { value: "low", displayName: "Low" },
+        { value: "high", displayName: "High" },
+      ],
     }],
     variants: [
       {
-        displayName: "High Thinking",
+        displayName: "GPT-5.6 Luna",
         params: [{ id: "reasoning_effort", value: "high" }],
         isDefault: true,
       },
     ],
   }]);
 
-  assert.equal(model.variants["high-thinking"]?.params?.[0]?.value, "high");
-  assert.equal(Object.values(model.variants).filter(
-    (selection) => selection.params?.[0]?.value === "high",
-  ).length, 1);
-  assert.equal(model.variants.low?.params?.[0]?.value, "low");
-  assert.equal(model.defaultSelection.params?.[0]?.value, "high");
+  assert.deepEqual(Object.keys(model.variants).sort(), ["high", "low"]);
+  assert.equal(model.variants.high.params?.[0]?.value, "high");
+});
+
+test("non-thinking preset can still define the SDK default without becoming a variant", () => {
+  const [model] = modelsFromSdk([{
+    id: "composer-2.5",
+    displayName: "Composer 2.5",
+    parameters: [{
+      id: "fast",
+      displayName: "Fast",
+      values: [{ value: "false" }, { value: "true", displayName: "Fast" }],
+    }],
+    variants: [{
+      displayName: "Fast",
+      params: [{ id: "fast", value: "true" }],
+      isDefault: true,
+    }],
+  }]);
+
+  assert.deepEqual(model.variants, {});
+  assert.deepEqual(model.defaultSelection.params, [{ id: "fast", value: "true" }]);
 });
 
 test("Cursor models defer context-window management to Cursor", () => {

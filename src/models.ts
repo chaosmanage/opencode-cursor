@@ -19,6 +19,8 @@ export interface CursorModel {
   maxTokens: number;
 }
 
+type CursorParameter = NonNullable<SDKModel["parameters"]>[number];
+
 let catalog: CursorModel[] = readCache();
 
 function variantId(displayName: string, index: number): string {
@@ -26,11 +28,36 @@ function variantId(displayName: string, index: number): string {
   return clean || "variant-" + (index + 1);
 }
 
-function paramsKey(params: readonly ModelParameterValue[] | undefined): string {
-  return JSON.stringify(
-    [...(params || [])]
-      .map((item) => ({ id: item.id, value: item.value }))
-      .sort((a, b) => a.id.localeCompare(b.id)),
+function normalizedParameterName(value: string | undefined): string {
+  return (value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+/**
+ * OpenCode renders model variants in its Thinking selector, so only Cursor
+ * controls that actually represent reasoning/thinking effort belong there.
+ * Other SDK parameters (fast, context, optimize_for, etc.) must not be exposed
+ * as OpenCode variants.
+ */
+export function isThinkingParameter(parameter: Pick<CursorParameter, "id" | "displayName">): boolean {
+  const id = normalizedParameterName(parameter.id);
+  if (
+    id === "reasoning" ||
+    id === "reasoning_effort" ||
+    id === "reasoning_level" ||
+    id === "effort" ||
+    id === "thinking" ||
+    id === "thinking_effort" ||
+    id === "thinking_level"
+  ) {
+    return true;
+  }
+
+  const label = normalizedParameterName(parameter.displayName);
+  return (
+    label.includes("reasoning") ||
+    label.includes("thinking") ||
+    label === "effort" ||
+    label.endsWith("_effort")
   );
 }
 
@@ -44,12 +71,51 @@ function withParam(
   return next;
 }
 
+function thinkingKey(
+  params: readonly ModelParameterValue[] | undefined,
+  thinkingIds: ReadonlySet<string>,
+): string {
+  return JSON.stringify(
+    [...(params || [])]
+      .filter((item) => thinkingIds.has(item.id))
+      .map((item) => ({ id: item.id, value: item.value }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+}
+
+function choiceLabel(row: SDKModel, parameter: CursorParameter, value: { value: string; displayName?: string }): string {
+  const display = value.displayName?.trim();
+  if (display && normalizedParameterName(display) !== normalizedParameterName(row.displayName)) {
+    return display;
+  }
+  return value.value;
+}
+
+function labelForPreset(
+  row: SDKModel,
+  params: readonly ModelParameterValue[] | undefined,
+  thinkingParameters: readonly CursorParameter[],
+  fallback: string,
+): string {
+  const relevant = (params || []).filter((item) =>
+    thinkingParameters.some((parameter) => parameter.id === item.id),
+  );
+  if (relevant.length !== 1) return fallback;
+
+  const selected = relevant[0];
+  const parameter = thinkingParameters.find((item) => item.id === selected.id);
+  const value = parameter?.values?.find((item) => item.value === selected.value);
+  if (!parameter || !value) return selected.value;
+  return choiceLabel(row, parameter, value);
+}
+
 function discoveredSelections(row: SDKModel): {
   defaultSelection: ModelSelection;
   variants: Record<string, ModelSelection>;
 } {
+  const parameters = row.parameters || [];
   const defaultParams: ModelParameterValue[] = [];
-  for (const parameter of row.parameters || []) {
+  for (const parameter of parameters) {
     const first = parameter.values?.[0];
     if (first) defaultParams.push({ id: parameter.id, value: first.value });
   }
@@ -58,53 +124,56 @@ function discoveredSelections(row: SDKModel): {
     id: row.id,
     ...(defaultParams.length ? { params: defaultParams } : {}),
   };
-  const variants: Record<string, ModelSelection> = {};
-  const seen = new Set<string>();
 
-  const addVariant = (
-    label: string,
-    selection: ModelSelection,
-    index: number,
-    fallbackPrefix?: string,
-  ) => {
-    const key = paramsKey(selection.params);
-    if (seen.has(key)) return;
-    seen.add(key);
+  const thinkingParameters = parameters.filter(isThinkingParameter);
+  const thinkingIds = new Set(thinkingParameters.map((parameter) => parameter.id));
+  const variants: Record<string, ModelSelection> = {};
+  const seenThinkingSelections = new Set<string>();
+
+  const addVariant = (label: string, selection: ModelSelection, index: number) => {
+    const key = thinkingKey(selection.params, thinkingIds);
+    if (key === "[]" || seenThinkingSelections.has(key)) return;
+    seenThinkingSelections.add(key);
 
     let id = variantId(label, index);
-    if (variants[id]) {
-      id = variantId((fallbackPrefix ? fallbackPrefix + " " : "") + label, index);
-    }
     let suffix = 2;
     const base = id;
     while (variants[id]) id = base + "-" + suffix++;
-
     variants[id] = selection;
   };
 
+  // Presets can define the SDK's true default selection even when they contain
+  // non-thinking parameters. Preserve that default, but only expose a preset in
+  // OpenCode's Thinking menu when it actually selects a reasoning control.
   for (const [index, variant] of (row.variants || []).entries()) {
     const selection: ModelSelection = {
       id: row.id,
       ...(variant.params?.length ? { params: variant.params } : {}),
     };
-    addVariant(variant.displayName, selection, index);
     if (variant.isDefault) defaultSelection = selection;
+    if ((variant.params || []).some((param) => thinkingIds.has(param.id))) {
+      addVariant(
+        labelForPreset(row, variant.params, thinkingParameters, variant.displayName),
+        selection,
+        index,
+      );
+    }
   }
 
-  // Cursor documents parameters as the source of truth for model-specific
-  // controls such as reasoning effort. Preset variants do not necessarily
-  // enumerate every allowed parameter value, so surface any remaining values
-  // dynamically instead of hardcoding per-model thinking levels.
-  for (const [parameterIndex, parameter] of (row.parameters || []).entries()) {
-    if (!parameter.values || parameter.values.length <= 1) continue;
-    for (const [valueIndex, value] of parameter.values.entries()) {
-      const params = withParam(defaultParams, parameter.id, value.value);
-      const selection: ModelSelection = { id: row.id, params };
+  // Preset variants are not guaranteed to enumerate every reasoning value.
+  // Discover missing thinking levels from the SDK parameter definitions. Base
+  // them on the SDK's default selection so unrelated defaults stay intact.
+  const baseParams = defaultSelection.params || defaultParams;
+  for (const [parameterIndex, parameter] of thinkingParameters.entries()) {
+    for (const [valueIndex, value] of (parameter.values || []).entries()) {
+      const selection: ModelSelection = {
+        id: row.id,
+        params: withParam(baseParams, parameter.id, value.value),
+      };
       addVariant(
-        value.displayName || value.value,
+        choiceLabel(row, parameter, value),
         selection,
         (row.variants?.length || 0) + parameterIndex * 100 + valueIndex,
-        parameter.displayName || parameter.id,
       );
     }
   }
@@ -120,10 +189,9 @@ export function modelsFromSdk(rows: SDKModel[]): CursorModel[] {
       name: row.displayName || row.id,
       ...(row.description ? { description: row.description } : {}),
       ...selections,
-      // OpenCode uses context=0 as its sentinel for "do not perform
-      // OpenCode-side context overflow compaction". Cursor owns the durable
-      // agent conversation and compacts it against the selected model's real
-      // context window, so we intentionally do not invent a numeric limit.
+      // OpenCode's zero sentinel disables OpenCode-side overflow compaction.
+      // The durable Cursor agent owns the conversation and applies the actual
+      // selected model's context policy.
       contextWindow: 0,
       maxTokens: FALLBACK_MAX_TOKENS,
     };

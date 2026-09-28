@@ -34,7 +34,7 @@ Normal Cursor agents receive only the SDK `mcp` capability when OpenCode tools a
 ## Models
 
 - Uses `Cursor.models.list()`.
-- Maps SDK preset variants and dynamically discovered parameter values (including reasoning-effort controls) to OpenCode variants.
+- Maps only SDK reasoning/thinking/effort controls to OpenCode variants; unrelated SDK parameters such as fast/context/router controls are deliberately excluded from OpenCode's Thinking selector.
 - Caches the last successful SDK catalog.
 - Refreshes after sign-in and periodically.
 - Does not use private model RPCs or private metadata.

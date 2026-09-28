@@ -91,13 +91,22 @@ context-overflow compaction. Normal OpenCode sessions resume a durable Cursor
 agent, so Cursor owns the conversation state and compacts it against the actual
 selected model's context window.
 
-## Dynamic model parameters and thinking levels
+## Dynamic reasoning/thinking levels
 
-The plugin treats the SDK catalog as the source of truth for model-specific
-controls. Preset `variants` are mapped directly. In addition, values exposed
-through each model's `parameters` array are surfaced dynamically as OpenCode
-variants when they are not already represented by a preset variant.
+OpenCode renders model `variants` in its Thinking selector. Cursor SDK model
+parameters are broader than thinking controls: the catalog can expose unrelated
+parameters such as `fast`, `context`, and Cursor Router's `optimize_for`.
+Those must not be mapped to OpenCode variants.
 
-This covers account/team-specific controls such as reasoning effort without
-hardcoding model names or thinking levels. New parameter values returned by a
-future SDK catalog become selectable after the catalog refreshes.
+The plugin therefore exposes only SDK parameters that semantically represent
+reasoning/thinking effort (for example `reasoning`, `reasoning_effort`,
+`effort`, or `thinking_level`). Their allowed values are discovered from
+`Cursor.models.list()` and become OpenCode Thinking choices dynamically.
+
+SDK preset variants still define the SDK default selection. A preset is shown
+in OpenCode's Thinking menu only when it actually selects a reasoning/thinking
+parameter. Fast/context/router presets remain valid SDK selections internally
+but do not pollute the Thinking menu.
+
+This keeps the picker forward-compatible without hardcoding model names or
+reasoning levels.

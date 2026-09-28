@@ -68,7 +68,7 @@ Live login on the VPS is intentionally deferred until the user performs the brow
 ### Phase 3 — Official model catalog/provider registration — COMPLETE
 
 - Uses `Cursor.models.list()`.
-- Maps SDK preset variants and dynamically discovered parameter values into OpenCode variants, including model-specific reasoning/thinking controls.
+- Maps only dynamically discovered reasoning/thinking/effort controls into OpenCode variants. Non-thinking SDK parameters (for example fast/context/router controls) are not exposed through OpenCode's Thinking selector.
 - Caches the last successful SDK catalog.
 - Refreshes the catalog after login and periodically.
 - Keeps stale cache on transient discovery failure.
