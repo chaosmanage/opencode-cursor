@@ -80,9 +80,6 @@ jobs:
             require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -90,13 +87,13 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Run tests
-        run: bun run test
+        run: npm test
 
       - name: Build package
-        run: bun run build
+        run: npm run build
 
       - name: Commit and tag
         env:
@@ -104,10 +101,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json
-          if git ls-files --modified --others | grep -q bun.lock; then
-            git add bun.lock
-          fi
+          git add package.json package-lock.json
           git commit -m "chore: release v${VERSION}"
           git tag "v${VERSION}"
           git push origin "v${VERSION}"

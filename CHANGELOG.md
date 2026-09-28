@@ -2,8 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased]
+
+### Changed
+
+- Replace the direct/private Cursor protocol integration with the official `@cursor/sdk`.
+- Move authentication ownership to `Cursor.auth`; OpenCode stores only a non-secret integration marker.
+- Discover account-visible models and variants through `Cursor.models.list()`.
+- Map OpenCode Plan mode to Cursor `plan`; normal primary turns use Cursor `agent`.
+- Disable ambient Cursor setting sources by default.
+- Restrict Cursor's built-in tool surface and expose OpenCode tools through SDK custom tools.
+
+### Added
+
+- Local OpenAI-compatible SDK proxy with SSE streaming and heartbeat support.
+- Persistent OpenCode session to Cursor agent mapping and SDK resume.
+- Parked custom-tool continuations with OpenCode-owned execution.
+- Image input and image tool-result relay.
+- Cursor SDK usage normalization with continuation delta accounting.
+- Static checks preventing reintroduction of the removed private protocol.
+- Session interruption cleanup and client-disconnect cancellation.
+
+### Removed
+
+- Plugin-owned Cursor OAuth/PKCE/token refresh.
+- Private Cursor RPC/protobuf transport and HTTP/2 bridge workers.
+- Private model/name RPC discovery and reverse-engineered protocol fixtures.
 
 ## [2.2.0] - 2026-08-05
 

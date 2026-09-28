@@ -1,159 +1,94 @@
 # opencode-cursor
 
-[![GitHub stars](https://img.shields.io/github/stars/openchamber/opencode-cursor?style=flat&labelColor=100F0F&color=66800B)](https://github.com/openchamber/opencode-cursor/stargazers)
-[![GitHub release](https://img.shields.io/github/v/release/openchamber/opencode-cursor?style=flat&labelColor=100F0F&color=205EA6)](https://github.com/openchamber/opencode-cursor/releases/latest)
-[![npm](https://img.shields.io/npm/v/%40openchamber%2Fopencode-cursor?style=flat&labelColor=100F0F&color=24837B)](https://www.npmjs.com/package/@openchamber/opencode-cursor)
-[![Discord](https://img.shields.io/badge/Discord-join.svg?style=flat&labelColor=100F0F&color=8B7EC8&logo=discord&logoColor=FFFCF0)](https://discord.gg/ZYRSdnwwKA)
-[![License](https://img.shields.io/badge/license-MIT-black?style=flat&labelColor=100F0F&color=EC8B49)](LICENSE)
+Cursor models in OpenCode through Cursor's official TypeScript SDK.
 
-## Cursor models in OpenCode. Direct API. Native OAuth.
-
-**opencode-cursor is the OpenCode plugin for running Cursor models — Claude, GPT, Gemini, Grok, Composer, and Cursor Auto — with thinking, effort variants, streaming, and tool calls that finish.**
-
-Use the models on your Cursor subscription from OpenCode and [OpenChamber](https://github.com/openchamber/openchamber) without a `cursor-agent` binary or an API key. The plugin authenticates in the browser, discovers the live catalog, and proxies the Cursor API over HTTP/2.
-
-![opencode-cursor — Cursor models in OpenCode, direct API, native OAuth](docs/header.svg)
-
-## What you can do
-
-### Sign in with Cursor, not an API key
-
-`opencode auth login --provider cursor` opens a PKCE browser flow. Tokens land in `~/.local/share/opencode/auth.json` and refresh automatically. In OpenChamber, if no OAuth button appears, the plugin still prints a login URL — open it, then reload.
-
-### Use the models your account actually has
-
-The plugin discovers Cursor’s catalog for your subscription, including Thinking, Fast, 1M context, and effort levels, and maps them to OpenCode-native choices.
-
-### Keep agent loops moving
-
-Streaming, tool calls, and parked bridges are tuned for OpenCode agent turns. Reasoning gets time to think; silent post-tool hangs recover in about 90 seconds instead of stalling for minutes.
-
-### Skip the CLI wrapper
-
-No `cursor-agent` install and no SDK child process. OpenCode talks to a local OpenAI-compatible proxy, which talks to Cursor over a persistent HTTP/2 bridge.
-
-## Quick start
-
-### 1. Install the plugin
-
-```bash
-npm install -g @openchamber/opencode-cursor
-```
-
-### 2. Register it in OpenCode
-
-Add (or merge) this into `~/.config/opencode/opencode.json`:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@openchamber/opencode-cursor"],
-  "provider": {
-    "cursor": { "name": "Cursor" }
-  }
-}
-```
-
-### 3. Sign in with Cursor
-
-```bash
-opencode auth login --provider cursor
-```
-
-A browser window opens. Approve access. You do not need a Cursor API key.
-
-### 4. Run a Cursor model
-
-```bash
-opencode run "Summarise this repository in five bullets." --model cursor/default
-```
-
-In the TUI, pick provider **cursor**, then a model (including Thinking / Fast / effort variants when Cursor exposes them).
-
-### From source (optional)
-
-```bash
-git clone https://github.com/openchamber/opencode-cursor.git
-cd opencode-cursor
-bun install && bun run build
-npm install -g .
-```
-
-## Authenticate
-
-| Step | What happens |
-| --- | --- |
-| `opencode auth login --provider cursor` | Starts PKCE browser OAuth |
-| You approve in the browser | Cursor returns access + refresh tokens |
-| Plugin stores credentials | `~/.local/share/opencode/auth.json` |
-| Access expires | Plugin refreshes silently; permanent 4xx → re-login |
-
-**Browser OAuth is the only supported path.** You do not need a Cursor API key.
+> Current branch status: SDK rewrite under development. This branch is not an upstream release.
 
 ## Architecture
 
 ```text
 OpenCode
-  └─ /v1/chat/completions
-       └─ Local OpenAI-compatible proxy
-            └─ Node HTTP/2 bridge
-                 └─ Cursor API (api2.cursor.sh)
+  -> local OpenAI-compatible proxy
+  -> @cursor/sdk
+  -> Cursor
 ```
 
-| Layer | Responsibility |
-| --- | --- |
-| **Plugin hooks** | OAuth, provider config, model catalog, selection headers |
-| **Proxy** | OpenAI ↔ Cursor protocol, tool loops, stalls, checkpoints |
-| **Transport** | Persistent / one-shot HTTP/2 bridges to Cursor |
+The rewrite intentionally removes the direct/private Cursor protocol stack. Authentication, model discovery, agent sessions, streaming, and usage data come from documented `@cursor/sdk` APIs.
 
-Model listings map Cursor’s variant catalog into OpenCode-native choices (`Opus 4.8`, `Opus 4.8 Thinking`, effort `low`→`max`, Fast, …). Selection is encoded so Cursor receives the exact `RequestedModel` parameters your account supports.
+### Execution boundary
+
+**Cursor reasons; OpenCode controls execution.**
+
+For normal agent turns the plugin offers Cursor only the SDK `mcp` capability and supplies the tools from the current OpenCode request as SDK custom tools. Cursor's native shell/read/edit/task tools are not offered. The custom-tool callback parks while OpenCode applies its own permission rules and executes the tool; the result resumes the same Cursor run.
+
+Ambient Cursor setting sources are disabled by default, so project/user Cursor MCP configuration is not implicitly loaded into the provider.
+
+## Authentication
+
+Run OpenCode's Cursor sign-in flow. The plugin calls `Cursor.auth.login()` and relays the official Cursor login URL.
+
+The Cursor SDK owns the credential lifecycle and default credential store. The plugin does not implement PKCE/OAuth itself, does not parse or copy the SDK credential, and stores only a non-secret OpenCode integration marker.
+
+If the SDK uses its default store, its login is stored by the SDK under `~/.cursor/sdk/auth.json`.
+
+## Models
+
+Models are discovered with `Cursor.models.list()` after SDK sign-in. SDK variants are mapped to OpenCode model variants and the last successful catalog is cached for startup.
+
+The SDK does not currently expose every field OpenCode's provider schema expects, so context/output limits use conservative plugin defaults rather than private model metadata.
+
+## Modes
+
+- OpenCode Plan agent -> Cursor `plan`
+- other primary agents -> Cursor `agent`
+- title, compaction, and generate requests -> isolated tool-less SDK agents
+
+There is no invented SDK `ask` mode.
+
+## Media
+
+Image input is mapped to SDK image inputs for direct user messages and tool results. Unsupported non-image documents are not advertised as provider capabilities.
+
+## Usage and limits
+
+Per-turn token usage is mapped from documented Cursor SDK usage events. Cumulative usage is delta-accounted across parked tool continuations to avoid double counting.
+
+This plugin does **not** scrape Cursor's dashboard and does not claim to know account-wide monthly quota percentage or billing-cycle remaining allowance.
 
 ## Requirements
 
-- [OpenCode](https://opencode.ai)
-- Active Cursor subscription
-- Bun (plugin runtime) · Node.js ≥ 18 (HTTP/2 bridge)
+- OpenCode 2.x plugin host
+- Node.js >= 22.13
+- Cursor account that can use the Agent SDK
+- `@cursor/sdk` 1.0.32 for this development branch
 
 ## Development
 
 ```bash
-bun install
-bun run build
-bun run test
+npm ci
+npm run check
+npm pack --dry-run
 ```
 
-Optional knobs: `OPENCODE_CURSOR_PRE_OUTPUT_STALL_TIMEOUT_MS`, `OPENCODE_CURSOR_POST_TOOL_PRE_OUTPUT_STALL_TIMEOUT_MS`, `OPENCODE_CURSOR_TOOL_DEBOUNCE_MS`.
-
-Debug logs: `OPENCODE_CURSOR_DEBUG=1`.
-
-## Troubleshooting
-
-| Symptom | Fix |
-| --- | --- |
-| Cursor missing from provider list | Confirm `plugin` includes `@openchamber/opencode-cursor` and restart OpenCode |
-| "sign in required" / login URL in model name | Open the printed URL, approve OAuth, reload |
-| Refresh rejected / re-login required | Run `opencode auth login --provider cursor` again |
-| Model not found | Wait for live discovery after login; avoid relying on stale offline catalogs |
-| Tool loop restates forever | Update to the latest plugin — post-tool resume and phase-aware stalls are required |
-
-## Contributing
-
-Issues and pull requests belong in this repository: [openchamber/opencode-cursor](https://github.com/openchamber/opencode-cursor).
+Enable redacted debug logging with:
 
 ```bash
-bun install
-bun run build
-bun run test
+OPENCODE_CURSOR_DEBUG=1
 ```
 
-## Acknowledgments
+## Security / integration constraints
 
-This plugin started as community work around Cursor access in OpenCode. Special thanks to:
+Automated checks reject first-party runtime references to the removed private integration, including the old private backend hostname, generated Cursor protobuf transport, private model/name RPCs, H2 bridge files, and plugin-owned PKCE logic.
 
-- [OpenCode](https://opencode.ai) for the plugin API
-- [OpenChamber](https://github.com/openchamber/openchamber) for the workspace that runs this plugin in production
-- Contributors who shaped OAuth, model discovery, and the HTTP/2 proxy
+The loopback proxy binds to `127.0.0.1`, rejects browser `Origin` requests and non-loopback host headers, and cancels an active Cursor run when the OpenCode HTTP client disconnects.
+
+## Known development limitations
+
+- Live authenticated SDK/OpenCode end-to-end testing still requires a Cursor SDK login on the test machine.
+- Account-wide subscription quota/remaining-plan telemetry is not available through the documented SDK surface used here.
+- PDF input is not advertised.
+- This rewrite has not been submitted upstream; see the repository RFC discussion before any PR is created.
 
 ## License
 
-[MIT](LICENSE)
+MIT

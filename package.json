@@ -21,7 +21,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --test test/**/*.test.mjs",
     "test:compliance": "node scripts/verify-no-private-cursor-api.mjs",
-    "prepublishOnly": "npm run build && npm run test && npm run test:compliance"
+    "prepublishOnly": "npm run build && npm run test && npm run test:compliance",
+    "check": "npm run build && npm test && npm run test:compliance"
   },
   "repository": {
     "type": "git",
