@@ -21,7 +21,7 @@ import { getBridge, putBridge, consumeBridge, closeBridge, closeAllBridges, type
 import { decodeSelection } from "./model-selection.js";
 import { failureResponse } from "./failure.js";
 import { log } from "./log.js";
-import { primaryPrompt, metaPrompt } from "./prompt.js";
+import { primaryPrompt, metaPrompt, recoveryPrompt, hasPriorConversation } from "./prompt.js";
 import { getSession, setSession, forgetSession } from "./session-store.js";
 import { ToolParking } from "./tools.js";
 import { toOpenAIUsage, usageGrowth, type OpenAIUsage } from "./usage.js";
@@ -82,7 +82,7 @@ async function openAgent(
   runMode: AgentModeOption,
   tools: ToolParking,
   body: ChatCompletionRequest,
-): Promise<SDKAgent> {
+): Promise<{ agent: SDKAgent; resumed: boolean }> {
   const customTools = tools.build(body.tools || []);
   const options = {
     model,
@@ -98,7 +98,7 @@ async function openAgent(
   const saved = getSession(key);
   if (saved?.agentId && saved.cwd === cwd) {
     try {
-      return await Agent.resume(saved.agentId, options);
+      return { agent: await Agent.resume(saved.agentId, options), resumed: true };
     } catch (error) {
       log.warn("Cursor agent resume failed; starting a fresh agent", {
         key,
@@ -107,7 +107,7 @@ async function openAgent(
       forgetSession(key);
     }
   }
-  return Agent.create(options);
+  return { agent: await Agent.create(options), resumed: false };
 }
 
 function isMeta(kind: string | undefined): boolean {
@@ -410,8 +410,13 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
     if (!resolved) throw new Error("No pending Cursor tool call matched the OpenCode tool result.");
   } else if (!bridge) {
     const parking = new ToolParking();
-    const agent = await openAgent(key, cwd, selection, mode(req), parking, body);
-    const run = await agent.send(primaryPrompt(messages), {
+    const opened = await openAgent(key, cwd, selection, mode(req), parking, body);
+    const agent = opened.agent;
+    const prompt =
+      !opened.resumed && hasPriorConversation(messages)
+        ? recoveryPrompt(messages)
+        : primaryPrompt(messages);
+    const run = await agent.send(prompt, {
       model: selection,
       mode: mode(req),
       local: { customTools: parking.build(body.tools || []) },
@@ -436,8 +441,13 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
       if (outcome === "revert_to_followup") {
         closeBridge(key, new Error("Cursor requested a follow-up turn"));
         const parking = new ToolParking();
-        const agent = await openAgent(key, cwd, selection, mode(req), parking, body);
-        const run = await agent.send(primaryPrompt(messages), {
+        const opened = await openAgent(key, cwd, selection, mode(req), parking, body);
+        const agent = opened.agent;
+        const prompt =
+          !opened.resumed && hasPriorConversation(messages)
+            ? recoveryPrompt(messages)
+            : primaryPrompt(messages);
+        const run = await agent.send(prompt, {
           model: selection,
           mode: mode(req),
           local: { customTools: parking.build(body.tools || []) },
