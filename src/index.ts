@@ -184,3 +184,4 @@ export { authorizeWithCursorSdk } from "./sdk-login.js";
 export { getCursorModels, refreshCursorModels } from "./models.js";
 export { startProxy, getProxyBaseUrl } from "./proxy.js";
 export { setCursorSdkOverridesForTests } from "./sdk.js";
+export { getCursorDiagnostics } from "./diagnostics.js";

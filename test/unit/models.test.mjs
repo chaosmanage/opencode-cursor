@@ -19,3 +19,20 @@ test("SDK variants map to stable OpenCode variant ids", () => {
   assert.deepEqual(model.variants["high-thinking"].params, [{ id: "thinking", value: "high" }]);
   assert.deepEqual(model.variants.fast.params, [{ id: "speed", value: "fast" }]);
 });
+
+
+import { getCursorModels, refreshCursorModels } from "../../dist/models.js";
+import { setCursorSdkOverridesForTests } from "../../dist/sdk.js";
+
+test("model refresh uses the official SDK facade", async (t) => {
+  setCursorSdkOverridesForTests({
+    listModels: async () => [{
+      id: "sdk-model",
+      displayName: "SDK Model",
+      variants: [],
+    }],
+  });
+  t.after(() => setCursorSdkOverridesForTests());
+  await refreshCursorModels();
+  assert.equal(getCursorModels().some((model) => model.id === "sdk-model"), true);
+});

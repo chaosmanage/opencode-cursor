@@ -11,3 +11,28 @@ test("OpenCode sign-in marker contains no usable Cursor credential", () => {
   assert.equal(marker.expires, 0);
   assert.equal(Object.values(marker).some((value) => typeof value === "string" && /^key_|^sk-|Bearer /i.test(value)), false);
 });
+
+
+import { authorizeWithCursorSdk } from "../../dist/sdk-login.js";
+import { setCursorSdkOverridesForTests } from "../../dist/sdk.js";
+
+test("auth flow relays the SDK login URL and discards the returned key", async (t) => {
+  setCursorSdkOverridesForTests({
+    authStatus: async () => ({ status: "logged-out" }),
+    authLogin: async (options) => {
+      options.onLoginUrl?.("https://cursor.test/login");
+      return {
+        apiKey: "super-secret-key",
+        email: "dev@example.com",
+        apiKeyExpiresAtMs: Date.now() + 1000,
+      };
+    },
+  });
+  t.after(() => setCursorSdkOverridesForTests());
+
+  const auth = await authorizeWithCursorSdk();
+  assert.equal(auth.url, "https://cursor.test/login");
+  const marker = await auth.callback;
+  assert.equal(marker.access, "cursor-sdk");
+  assert.equal(JSON.stringify(marker).includes("super-secret-key"), false);
+});
