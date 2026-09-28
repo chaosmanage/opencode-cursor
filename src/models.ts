@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { Cursor, type ModelSelection, type SDKModel } from "@cursor/sdk";
+import { type ModelSelection, type SDKModel } from "@cursor/sdk";
+import { cursorSdk } from "./sdk.js";
 import { FALLBACK_CONTEXT_WINDOW, FALLBACK_MAX_TOKENS } from "./constants.js";
 
 export interface CursorModel {
@@ -48,7 +49,7 @@ export function getCursorModels(): CursorModel[] {
 }
 
 export async function refreshCursorModels(): Promise<boolean> {
-  const rows = await Cursor.models.list();
+  const rows = await cursorSdk().listModels();
   if (!rows.length) return false;
   const next = modelsFromSdk(rows);
   const changed = JSON.stringify(next) !== JSON.stringify(catalog);

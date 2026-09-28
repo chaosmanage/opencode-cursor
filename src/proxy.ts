@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
-  Agent,
   AuthenticationError,
   type AgentModeOption,
+  type AgentOptions,
   type ModelSelection,
   type SDKAgent,
+  type SDKCustomTool,
   type SDKMessage,
 } from "@cursor/sdk";
 import {
@@ -27,6 +28,7 @@ import { ToolParking } from "./tools.js";
 import { toOpenAIUsage, usageGrowth, type OpenAIUsage } from "./usage.js";
 import type { ChatCompletionRequest, OpenAIMessage } from "./openai.js";
 import { toolResultMessages } from "./openai.js";
+import { cursorSdk } from "./sdk.js";
 
 let server: ReturnType<typeof createServer> | undefined;
 let baseUrl: string | undefined;
@@ -37,10 +39,18 @@ function header(req: IncomingMessage, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function trusted(req: IncomingMessage): boolean {
-  if (req.headers.origin) return false;
-  const host = String(req.headers.host || "");
+export function trustedLoopbackHeaders(headers: {
+  host?: string | string[];
+  origin?: string | string[];
+}): boolean {
+  if (headers.origin) return false;
+  const raw = headers.host;
+  const host = String(Array.isArray(raw) ? raw[0] || "" : raw || "");
   return /^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i.test(host);
+}
+
+function trusted(req: IncomingMessage): boolean {
+  return trustedLoopbackHeaders(req.headers);
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -75,16 +85,13 @@ function completionId(key: string): string {
   return "chatcmpl_" + createHash("sha1").update(key + Date.now()).digest("hex").slice(0, 24);
 }
 
-async function openAgent(
-  key: string,
+export function buildAgentOptions(
   cwd: string,
   model: ModelSelection,
   runMode: AgentModeOption,
-  tools: ToolParking,
-  body: ChatCompletionRequest,
-): Promise<{ agent: SDKAgent; resumed: boolean }> {
-  const customTools = tools.build(body.tools || []);
-  const options = {
+  customTools: Record<string, SDKCustomTool>,
+): AgentOptions {
+  return {
     model,
     mode: runMode,
     tools: Object.keys(customTools).length ? ["mcp"] : [],
@@ -95,10 +102,22 @@ async function openAgent(
       sandboxOptions: { enabled: true },
     },
   };
+}
+
+async function openAgent(
+  key: string,
+  cwd: string,
+  model: ModelSelection,
+  runMode: AgentModeOption,
+  tools: ToolParking,
+  body: ChatCompletionRequest,
+): Promise<{ agent: SDKAgent; resumed: boolean }> {
+  const customTools = tools.build(body.tools || []);
+  const options = buildAgentOptions(cwd, model, runMode, customTools);
   const saved = getSession(key);
   if (saved?.agentId && saved.cwd === cwd) {
     try {
-      return { agent: await Agent.resume(saved.agentId, options), resumed: true };
+      return { agent: await cursorSdk().resumeAgent(saved.agentId, options), resumed: true };
     } catch (error) {
       log.warn("Cursor agent resume failed; starting a fresh agent", {
         key,
@@ -107,7 +126,7 @@ async function openAgent(
       forgetSession(key);
     }
   }
-  return { agent: await Agent.create(options), resumed: false };
+  return { agent: await cursorSdk().createAgent(options), resumed: false };
 }
 
 function isMeta(kind: string | undefined): boolean {
@@ -383,7 +402,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
   const id = completionId(key);
 
   if (isMeta(kind)) {
-    const agent = await Agent.create({
+    const agent = await cursorSdk().createAgent({
       model: selection,
       tools: [],
       local: { cwd, settingSources: [], sandboxOptions: { enabled: true } },
@@ -569,7 +588,6 @@ export function getProxyBaseUrl(): string {
 }
 
 export async function assertSdkLogin(): Promise<void> {
-  const { Cursor } = await import("@cursor/sdk");
-  const status = await Cursor.auth.status();
+  const status = await cursorSdk().authStatus();
   if (status.status !== "logged-in") throw new AuthenticationError("Cursor SDK is not signed in.");
 }

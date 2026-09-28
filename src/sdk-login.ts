@@ -1,4 +1,4 @@
-import { Cursor } from "@cursor/sdk";
+import { cursorSdk } from "./sdk.js";
 
 const METHOD_ID = "cursor-sdk";
 
@@ -13,7 +13,7 @@ export function sdkSignInMarker() {
 }
 
 export async function authorizeWithCursorSdk() {
-  const status = await Cursor.auth.status();
+  const status = await cursorSdk().authStatus();
   if (status.status === "logged-in") {
     return {
       url: "",
@@ -31,7 +31,7 @@ export async function authorizeWithCursorSdk() {
     resolveUrl = resolve;
     rejectUrl = reject;
   });
-  const login = Cursor.auth.login({
+  const login = cursorSdk().authLogin({
     openBrowser: false,
     apiKeyName: "OpenChamber OpenCode Cursor",
     onLoginUrl: resolveUrl,
