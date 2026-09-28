@@ -77,3 +77,30 @@ No documented API used by this rewrite reports whole-account monthly percentage 
 - dashboard scraping
 - ambient Cursor MCP/settings by default
 - native Cursor shell/edit/write/task execution
+
+
+## Documented context-window metadata
+
+`Cursor.models.list()` does not currently expose context-window or output-token
+limits. The plugin therefore uses Cursor's public model documentation for known
+default context windows and keeps `200_000` only as the conservative fallback
+for unknown/new model IDs.
+
+The mapping intentionally uses **default context**, not the separately documented
+**Max Context** value. Max Context may require a model-specific mode or variant,
+and the SDK does not currently expose a generic field that lets OpenCode select
+that larger window safely.
+
+Current documented overrides include:
+
+- Claude Fable 5 / 5.1: 300k
+- Claude Opus 5 / 5.5: 300k
+- Claude Sonnet 5: 200k
+- Composer 2.5: 200k
+- Gemini 3.1 Pro / 3.8 Flash: 200k
+- GPT-5.5 and GPT-5.6 Luna/Sol/Terra: 272k
+- Grok 4.5 / 4.6 / 4.7: 256k
+- Muse Spark 1.3: 300k
+
+Unknown model IDs remain at 200k rather than guessing or consulting private
+Cursor endpoints.
