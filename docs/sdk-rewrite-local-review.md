@@ -2,7 +2,9 @@
 
 ## Status
 
-Local implementation is complete enough for authenticated live validation.
+The local implementation and fake-SDK verification are complete. Prior live
+validation is recorded in `HANDOVER.md`; no new Cursor inference was used for
+this review.
 
 **PR authorization gate remains closed. No pull request may be created without explicit user authorization.**
 
@@ -38,7 +40,7 @@ Normal Cursor agents receive only the SDK `mcp` capability when OpenCode tools a
 - Caches the last successful SDK catalog.
 - Refreshes after sign-in and periodically.
 - Does not use private model RPCs or private metadata.
-- Context limits are not guessed: Cursor models use OpenCode's `context: 0` sentinel so OpenCode does not compact against a fabricated window; the persistent Cursor agent owns context management. Output metadata remains conservative because the SDK catalog does not expose an authoritative output limit.
+- Context limits use a positive SDK field if one appears, then an explicit [Cursor-documented](https://cursor.com/docs) per-model default, then `0` for unknown IDs. Cached zero values for known IDs are backfilled. Output metadata remains conservative.
 
 ## Sessions and requests
 
@@ -65,7 +67,7 @@ Covered behaviors include one tool, parallel tools, parked callback resume, text
 
 - Input/output/cache/reasoning token usage maps to OpenAI-compatible usage.
 - Documented raw/charged cost is emitted as per-run `cursor_cost` deltas using an `Agent.getUsage()` baseline.
-- Cumulative usage is delta-accounted across parked continuations.
+- Cumulative usage is delta-accounted across streamed events and parked continuations. Completed `Run.usage` fills in missing final stream usage.
 - Auth, rate-limit, configuration, busy-agent, and network failures have explicit mappings.
 - Account-wide monthly quota is not fabricated or scraped.
 
@@ -93,13 +95,13 @@ CI/release now use Node/npm.
 Environment:
 
 - Node 22.23.2
-- OpenCode v2.0.16
+- OpenCode v2.0.18
 - `@cursor/sdk` 1.0.32
 
 Completed locally:
 
 - strict TypeScript build;
-- 28 automated tests;
+- 44 automated tests, including fake-SDK usage boundaries, context cache migration, and malformed ambient Cursor config isolation;
 - fake-SDK end-to-end text turn;
 - tool parking/resume;
 - parallel tools;
@@ -114,39 +116,36 @@ Completed locally:
 - credential redaction;
 - private-protocol compliance scan;
 - package dry-run;
+- `git diff --check`;
 - isolated OpenCode host boot with the local plugin path;
 - real `Cursor.auth.status()` probe.
 
-## Authenticated live validation still pending
+## Validation and remaining live work
 
-The remote test machine currently reports `Cursor.auth.status() -> logged-out`.
+Prior authenticated validation confirmed SDK login, real model listing, direct
+SDK text inference and usage, OpenCode text inference, Build and Plan modes,
+normal custom-tool execution, and OpenCode edit/bash permission enforcement.
+These used Cursor inference and were not repeated in this review.
 
-These remain pending until an interactive Cursor SDK login is completed:
+The OpenCode 2.0.18 `@opencode/ai` OpenAI-compatible adapter was separately
+run against a loopback fake SSE server. Its final usage result contained 19
+input, 7 output, 3 cached input, and 2 reasoning tokens, matching the fixture.
+This confirms the adapter consumes the proxy's final usage chunk shape. A
+standalone OpenCode CLI probe stalled during startup, so the full UI/session
+accounting path is not locally verified.
 
-- real account model listing;
-- real text inference;
-- real persistent agent resume;
-- real agent/plan mode;
-- real image input;
-- real custom-tool invocation against Cursor;
-- real cancellation;
-- real usage/cost response against the Cursor backend;
-- real OpenCode end-to-end inference.
-
-`scripts/live-sdk-smoke.mjs` is the first live validation harness. It exits without inference when logged out.
+Real cross-turn `Agent.resume()`, image input, backend cancellation,
+post-fix tool-routing efficiency, and post-fix usage display remain optional
+live tests requiring user authorization because they consume Cursor usage.
 
 ## Known limitations / remaining work
 
-1. Authenticated live SDK validation.
-2. Full OpenCode model-picker validation after a real catalog is available.
-3. Real backend validation of model variants.
-4. No account-wide quota/remaining-plan telemetry through this SDK surface.
-5. No native SDK Ask mode.
-6. PDF input is not advertised.
-7. Rewrite release/version number remains undecided.
+1. Full OpenCode session/UI accounting for the post-fix usage path is unverified.
+2. Real backend validation of model variants remains pending.
+3. No account-wide quota/remaining-plan telemetry through this SDK surface.
+4. No native SDK Ask mode; PDF input is not advertised.
+5. `npm audit` reports a high-severity `undici@5.29.0` advisory through the latest `@cursor/sdk@1.0.32` and `@connectrpc/connect-node@1.7.0`. The latter requires undici 5; npm reports no compatible fix. Forcing undici 6 would be an unsupported major-version override.
 
 ## PR gate
 
-After authenticated validation, rerun `npm ci`, `npm run check`, `npm pack --dry-run`, and `node scripts/live-sdk-smoke.mjs`.
-
-Then update this report with the live results and stop. Do not create a draft or final PR until the user explicitly authorizes it.
+Do not create a draft or final PR until the user explicitly authorizes it.

@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import {
+  contextWindowForModel,
   getCursorModels,
   isThinkingParameter,
   modelsFromSdk,
@@ -142,16 +147,43 @@ test("non-thinking preset can still define the SDK default without becoming a va
   assert.deepEqual(model.defaultSelection.params, [{ id: "fast", value: "true" }]);
 });
 
-test("Cursor models defer context-window management to Cursor", () => {
+test("known Cursor models use documented default context windows and unknown models stay uncapped", () => {
   const mapped = modelsFromSdk([
     { id: "composer-2.5", displayName: "Composer 2.5", variants: [] },
     { id: "claude-opus-5-5", displayName: "Claude Opus 5.5", variants: [] },
+    { id: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", variants: [] },
     { id: "future-new-model", displayName: "Future New Model", variants: [] },
   ]);
-  assert.deepEqual(mapped.map((model) => model.contextWindow), [0, 0, 0]);
+  assert.deepEqual(mapped.map((model) => model.contextWindow), [200000, 300000, 272000, 0]);
+});
+
+test("SDK context metadata overrides the documented fallback when a future SDK provides it", () => {
+  assert.equal(contextWindowForModel({
+    id: "composer-2.5",
+    displayName: "Composer 2.5",
+    contextWindow: 333000,
+  }), 333000);
+});
+
+test("cached zero limits are backfilled without replacing positive SDK limits", async () => {
+  const dataHome = await mkdtemp(join(tmpdir(), "cursor-sdk-cache-migration-"));
+  const cacheDir = join(dataHome, "opencode-cursor");
+  await mkdir(cacheDir);
+  await writeFile(join(cacheDir, "models-sdk.json"), JSON.stringify([
+    { id: "composer-2.5", contextWindow: 0 },
+    { id: "gpt-5.6-luna", contextWindow: 333000 },
+    { id: "unlisted-model", contextWindow: 0 },
+  ]));
+  const output = execFileSync(process.execPath, [
+    "--input-type=module", "-e",
+    "import { getCursorModels } from './dist/models.js'; console.log(JSON.stringify(getCursorModels().map(({ contextWindow }) => contextWindow)))",
+  ], { env: { ...process.env, XDG_DATA_HOME: dataHome }, encoding: "utf8" });
+  assert.deepEqual(JSON.parse(output), [200000, 333000, 0]);
 });
 
 test("model refresh uses the official SDK facade", async (t) => {
+  const originalDataHome = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = await mkdtemp(join(tmpdir(), "cursor-sdk-model-cache-test-"));
   setCursorSdkOverridesForTests({
     listModels: async () => [{
       id: "sdk-model",
@@ -159,7 +191,11 @@ test("model refresh uses the official SDK facade", async (t) => {
       variants: [],
     }],
   });
-  t.after(() => setCursorSdkOverridesForTests());
+  t.after(() => {
+    setCursorSdkOverridesForTests();
+    if (originalDataHome === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = originalDataHome;
+  });
   await refreshCursorModels();
   assert.equal(getCursorModels().some((model) => model.id === "sdk-model"), true);
 });

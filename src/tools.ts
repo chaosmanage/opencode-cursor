@@ -45,8 +45,13 @@ export class ToolParking {
         readOnlyHint: readOnly,
         destructiveHint: readOnly ? false : undefined,
       };
+      const description = tool.function.description || name;
       out[name] = {
-        description: tool.function.description || name,
+        description:
+          name === "execute"
+            ? description +
+              "\nUse this for connected MCP orchestration, not ordinary filesystem or shell work when direct read/edit/bash tools are available."
+            : description,
         inputSchema: (tool.function.parameters || {
           type: "object",
           properties: {},

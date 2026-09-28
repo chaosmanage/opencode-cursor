@@ -8,6 +8,7 @@ import {
   type SDKAgent,
   type SDKCustomTool,
   type SDKMessage,
+  type TokenUsage,
 } from "@cursor/sdk";
 import {
   AGENT_HEADER,
@@ -28,6 +29,7 @@ import { ToolParking } from "./tools.js";
 import {
   toOpenAIUsage,
   usageGrowth,
+  addUsage,
   costGrowth,
   type CursorCostDelta,
   type OpenAIUsage,
@@ -154,6 +156,17 @@ async function readAgentCost(agent: SDKAgent) {
   }
 }
 
+function takeUsageDelta(
+  bridge: ParkedBridge,
+  usage: TokenUsage | undefined,
+): OpenAIUsage | undefined {
+  const current = toOpenAIUsage(usage);
+  if (!current) return undefined;
+  const delta = usageGrowth(current, bridge.lastUsage);
+  bridge.lastUsage = current;
+  return delta;
+}
+
 async function collectBoundary(bridge: ParkedBridge): Promise<{ boundary: Awaited<ReturnType<typeof consumeBridge>>; collected: Collected }> {
   const collected: Collected = { content: "", reasoning: "" };
   const boundary = await consumeBridge(bridge, (event: SDKMessage) => {
@@ -164,15 +177,12 @@ async function collectBoundary(bridge: ParkedBridge): Promise<{ boundary: Awaite
     } else if (event.type === "thinking") {
       collected.reasoning += event.text;
     } else if (event.type === "usage") {
-      const current = toOpenAIUsage(event.usage);
-      if (current) {
-        collected.usage = usageGrowth(current, bridge.lastUsage);
-        bridge.lastUsage = current;
-      }
+      collected.usage = addUsage(collected.usage, takeUsageDelta(bridge, event.usage));
     } else if (event.type === "status" && event.status === "ERROR") {
       collected.statusError = event.message || "Cursor agent failed";
     }
   });
+  collected.usage = addUsage(collected.usage, takeUsageDelta(bridge, bridge.run.usage));
   if (boundary.kind === "done") {
     collected.cost = costGrowth(await readAgentCost(bridge.agent), bridge.costBaseline);
   }
@@ -330,17 +340,14 @@ function streamBridgeCompletion(
               choices: [{ index: 0, delta: { reasoning_content: event.text }, finish_reason: null }],
             });
           } else if (event.type === "usage") {
-            const current = toOpenAIUsage(event.usage);
-            if (current) {
-              latestUsage = usageGrowth(current, bridge.lastUsage);
-              bridge.lastUsage = current;
-            }
+            latestUsage = addUsage(latestUsage, takeUsageDelta(bridge, event.usage));
           } else if (event.type === "status" && event.status === "ERROR") {
             throw new Error(event.message || "Cursor agent failed");
           }
         });
 
         const tools = boundary.kind === "park" ? boundary.tools : [];
+        latestUsage = addUsage(latestUsage, takeUsageDelta(bridge, bridge.run.usage));
         for (const [index, tool] of tools.entries()) {
           send({
             id,
@@ -507,6 +514,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
           run,
           tools: parking,
           iterator: run.stream()[Symbol.asyncIterator](),
+          costBaseline,
           createdAt: Date.now(),
           lastActivity: Date.now(),
           closed: false,

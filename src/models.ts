@@ -21,6 +21,52 @@ export interface CursorModel {
 
 type CursorParameter = NonNullable<SDKModel["parameters"]>[number];
 
+// Cursor's public model docs list these default context windows. Keep this
+// deliberately explicit: a newly-added model must not inherit a guessed limit.
+// If a future SDK release exposes a context-window field, that value wins.
+const DOCUMENTED_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
+  "claude-fable-5-1": 300_000,
+  "claude-opus-5-5": 300_000,
+  "claude-sonnet-5": 200_000,
+  "claude-4-6-sonnet": 200_000,
+  "composer-2.5": 200_000,
+  "gemini-3.1-pro": 200_000,
+  "gemini-3.7-flash": 200_000,
+  "gemini-3.8-flash": 200_000,
+  "gpt-5.3-codex": 272_000,
+  "gpt-5.4": 272_000,
+  "gpt-5.5": 272_000,
+  "gpt-5.6-luna": 272_000,
+  "gpt-5.6-sol": 272_000,
+  "gpt-5.6-terra": 272_000,
+  "grok-4.5": 256_000,
+  "grok-4.6": 256_000,
+  "grok-4.7": 256_000,
+  "muse-spark-1.3": 300_000,
+};
+
+function sdkContextWindow(row: SDKModel): number | undefined {
+  const record = row as SDKModel & Record<string, unknown>;
+  for (const key of [
+    "contextWindow",
+    "context_window",
+    "contextLength",
+    "context_length",
+    "contextWindowTokens",
+    "context_window_tokens",
+  ]) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+  }
+  return undefined;
+}
+
+export function contextWindowForModel(row: SDKModel): number {
+  return sdkContextWindow(row) ?? DOCUMENTED_CONTEXT_WINDOWS[row.id] ?? 0;
+}
+
 let catalog: CursorModel[] = readCache();
 
 function variantId(displayName: string, index: number): string {
@@ -189,10 +235,7 @@ export function modelsFromSdk(rows: SDKModel[]): CursorModel[] {
       name: row.displayName || row.id,
       ...(row.description ? { description: row.description } : {}),
       ...selections,
-      // OpenCode's zero sentinel disables OpenCode-side overflow compaction.
-      // The durable Cursor agent owns the conversation and applies the actual
-      // selected model's context policy.
-      contextWindow: 0,
+      contextWindow: contextWindowForModel(row),
       maxTokens: FALLBACK_MAX_TOKENS,
     };
   });
@@ -227,7 +270,16 @@ function cachePath(): string {
 function readCache(): CursorModel[] {
   try {
     const parsed = JSON.parse(readFileSync(cachePath(), "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((model) => {
+      if (!model || typeof model !== "object") return model;
+      const item = model as CursorModel;
+      if (typeof item.contextWindow === "number" && item.contextWindow > 0) return item;
+      return {
+        ...item,
+        contextWindow: DOCUMENTED_CONTEXT_WINDOWS[item.id] ?? 0,
+      };
+    });
   } catch {
     return [];
   }

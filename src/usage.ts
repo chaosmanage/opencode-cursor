@@ -63,6 +63,41 @@ export function usageGrowth(current: OpenAIUsage, previous?: OpenAIUsage): OpenA
   };
 }
 
+export function addUsage(
+  current: OpenAIUsage | undefined,
+  next: OpenAIUsage | undefined,
+): OpenAIUsage | undefined {
+  if (!current) return next;
+  if (!next) return current;
+  const cached =
+    value(current.prompt_tokens_details?.cached_tokens) +
+    value(next.prompt_tokens_details?.cached_tokens);
+  const cacheWrite =
+    value(current.prompt_tokens_details?.cache_write_tokens) +
+    value(next.prompt_tokens_details?.cache_write_tokens);
+  const reasoning =
+    value(current.completion_tokens_details?.reasoning_tokens) +
+    value(next.completion_tokens_details?.reasoning_tokens);
+  const prompt = current.prompt_tokens + next.prompt_tokens;
+  const completion = current.completion_tokens + next.completion_tokens;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    ...(cached || cacheWrite
+      ? {
+          prompt_tokens_details: {
+            ...(cached ? { cached_tokens: cached } : {}),
+            ...(cacheWrite ? { cache_write_tokens: cacheWrite } : {}),
+          },
+        }
+      : {}),
+    ...(reasoning
+      ? { completion_tokens_details: { reasoning_tokens: reasoning } }
+      : {}),
+  };
+}
+
 
 export interface CursorCostDelta {
   raw_cost_cents: number;

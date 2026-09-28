@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { toOpenAIUsage, usageGrowth } from "../../dist/usage.js";
+import { addUsage, toOpenAIUsage, usageGrowth } from "../../dist/usage.js";
 
 test("Cursor usage maps cache and reasoning fields", () => {
   assert.deepEqual(toOpenAIUsage({
@@ -19,6 +19,16 @@ test("usage growth avoids double counting cumulative resumed turns", () => {
   const current = { prompt_tokens: 18, completion_tokens: 9, total_tokens: 27 };
   assert.deepEqual(usageGrowth(current, previous), {
     prompt_tokens: 8, completion_tokens: 4, total_tokens: 12,
+  });
+});
+
+test("usage deltas from multiple SDK events accumulate instead of losing earlier tokens", () => {
+  const first = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
+  const second = { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 };
+  assert.deepEqual(addUsage(first, second), {
+    prompt_tokens: 13,
+    completion_tokens: 6,
+    total_tokens: 19,
   });
 });
 

@@ -17,3 +17,17 @@ test("mutating tools are not annotated read-only", () => {
   const tools = parking.build([{ type: "function", function: { name: "bash", parameters: { type: "object" } } }]);
   assert.equal(tools.bash.annotations.readOnlyHint, false);
 });
+
+
+test("Code Mode execute is explicitly a fallback behind direct OpenCode tools", () => {
+  const parking = new ToolParking();
+  const tools = parking.build([{
+    type: "function",
+    function: {
+      name: "execute",
+      description: "Run confined code",
+      parameters: { type: "object" },
+    },
+  }]);
+  assert.match(tools.execute.description, /not ordinary filesystem or shell work/);
+});

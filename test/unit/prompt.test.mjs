@@ -8,7 +8,12 @@ test("only Code Mode system section is injected into primary prompt", () => {
     { role: "user", content: "do work" },
   ];
   assert.equal(codeModeCatalog(messages), "# Code Mode\nTool catalog here");
-  assert.equal(primaryPrompt(messages).text, "# Code Mode\nTool catalog here\n\ndo work");
+  const prompt = primaryPrompt(messages).text;
+  assert.match(prompt, /# OpenCode Tool Routing/);
+  assert.match(prompt, /use read\/edit\/bash directly/);
+  assert.match(prompt, /# Code Mode\nTool catalog here/);
+  assert.doesNotMatch(prompt, /secret host text/);
+  assert.match(prompt, /do work$/);
 });
 
 import { recoveryPrompt, hasPriorConversation } from "../../dist/prompt.js";

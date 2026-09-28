@@ -3,6 +3,14 @@ import type { OpenAIMessage } from "./openai.js";
 import { latestUserMessage, textContent } from "./openai.js";
 import { imagesFromContent } from "./media.js";
 
+export const TOOL_ROUTING_GUIDANCE = [
+  "# OpenCode Tool Routing",
+  "Prefer direct OpenCode tools for ordinary filesystem and shell work.",
+  "When the user gives an exact path, use read/edit/bash directly; do not glob, grep, or search just to rediscover it.",
+  "Use execute only for connected MCP orchestration or when no direct OpenCode tool can perform the operation.",
+  "For a simple mutation, make the change and perform at most one targeted verification unless the result is ambiguous.",
+].join("\n");
+
 export function codeModeCatalog(messages: OpenAIMessage[]): string {
   const system = messages.filter((m) => m.role === "system").map((m) => textContent(m.content)).join("\n");
   const at = system.indexOf("# Code Mode");
@@ -16,7 +24,9 @@ export function primaryPrompt(messages: OpenAIMessage[]): SDKUserMessage {
   const latest = latestUserMessage(messages);
   const text = latest ? textContent(latest.content) : "";
   const catalog = codeModeCatalog(messages);
-  const finalText = catalog ? catalog + "\n\n" + text : text;
+  const finalText = catalog
+    ? TOOL_ROUTING_GUIDANCE + "\n\n" + catalog + "\n\n" + text
+    : text;
   return {
     text: finalText || "Continue.",
     ...(latest ? { images: imagesFromContent(latest.content) } : {}),
@@ -63,7 +73,10 @@ export function recoveryPrompt(messages: OpenAIMessage[]): SDKUserMessage {
   const prefix =
     "The Cursor agent state could not be resumed. Reconstruct the working context from this OpenCode transcript and continue the latest user request. Do not repeat completed work unless needed.\n\n";
   return {
-    text: prefix + (catalog ? catalog + "\n\n" : "") + lines.join("\n\n"),
+    text:
+      prefix +
+      (catalog ? TOOL_ROUTING_GUIDANCE + "\n\n" + catalog + "\n\n" : "") +
+      lines.join("\n\n"),
     ...(latest ? { images: imagesFromContent(latest.content) } : {}),
   };
 }

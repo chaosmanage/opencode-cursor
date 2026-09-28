@@ -16,7 +16,7 @@ The login API can expose the official browser URL through `onLoginUrl`. The SDK'
 
 `Cursor.models.list()` returns canonical model IDs, display names, parameter definitions, and variants. Model selections are passed back as `{ id, params? }`.
 
-The SDK does not expose an authoritative numeric context window in model discovery. OpenCode v2 requires a context integer, so Cursor models use OpenCode's `0` sentinel to disable OpenCode-side overflow compaction; the persistent Cursor agent owns context management. Output metadata remains conservative.
+The public SDK model type does not currently expose a typed numeric context window. The mapper first accepts a positive context value if a future SDK supplies one, then uses an explicit table of model IDs and default windows verified against [Cursor model documentation](https://cursor.com/docs/models-and-pricing). An unknown model uses OpenCode's `0` sentinel. Output metadata remains conservative.
 
 ## Local agents
 
@@ -81,15 +81,17 @@ No documented API used by this rewrite reports whole-account monthly percentage 
 
 ## Context-window ownership
 
-`Cursor.models.list()` does not currently expose an authoritative numeric
-context window. The plugin therefore does not hardcode per-model context sizes
-and does not assign a guessed fallback to newly added models.
+`Cursor.models.list()` does not currently expose a typed numeric context window.
+The plugin's priority is SDK numeric value, documented per-model default,
+then `0` for unknown IDs. The fallback table is deliberately explicit; it does
+not infer limits from model families or provider marketing. The model cache
+backfills older zero entries for known IDs while preserving positive values.
+OpenCode's `0` sentinel disables its own overflow compaction for unknown models.
+The durable Cursor agent still owns conversation state across normal turns.
 
-OpenCode v2 requires `limit.context` to be an integer. Cursor models are
-registered with `context: 0`, OpenCode's sentinel for disabling its own
-context-overflow compaction. Normal OpenCode sessions resume a durable Cursor
-agent, so Cursor owns the conversation state and compacts it against the actual
-selected model's context window.
+The table was checked against the current [Cursor model index](https://cursor.com/docs)
+and individual Cursor model pages on 2026-09-28. The documented Sonnet 4.6 ID
+is `claude-4-6-sonnet`.
 
 ## Dynamic reasoning/thinking levels
 

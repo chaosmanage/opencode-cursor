@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -47,12 +47,12 @@ function fakeAgent(send) {
   };
 }
 
-async function request(body, session = "integration") {
+async function request(body, session = "integration", directory = "/tmp/project") {
   const response = await fetch(getProxyBaseUrl() + "/chat/completions", {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-opencode-cursor-directory": "/tmp/project",
+      "x-opencode-cursor-directory": directory,
       "x-opencode-cursor-session": session,
       "x-opencode-cursor-agent": "build",
       "x-opencode-cursor-kind": "primary",
@@ -61,6 +61,43 @@ async function request(body, session = "integration") {
   });
   return response;
 }
+
+test("broken ambient Cursor MCP settings are excluded from SDK agent options", async (t) => {
+  process.env.XDG_STATE_HOME = await mkdtemp(join(tmpdir(), "cursor-sdk-settings-state-"));
+  const directory = await mkdtemp(join(tmpdir(), "cursor-sdk-settings-project-"));
+  await mkdir(join(directory, ".cursor"));
+  await writeFile(join(directory, ".cursor", "mcp.json"), "{ deliberately invalid JSON");
+  let optionsSeen;
+  setCursorSdkOverridesForTests({
+    createAgent: async (options) => {
+      optionsSeen = options;
+      return fakeAgent(async () => fakeRun("agent-test", async function* () {
+        yield {
+          type: "assistant",
+          agent_id: "agent-test",
+          run_id: "run-test",
+          message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
+        };
+      }));
+    },
+  });
+  await startProxy();
+  t.after(async () => {
+    await releaseProxy();
+    setCursorSdkOverridesForTests();
+  });
+
+  const response = await request({
+    model: "fake-model",
+    stream: false,
+    messages: [{ role: "user", content: "hello" }],
+  }, "settings-isolation", directory);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).choices[0].message.content, "ok");
+  assert.equal(optionsSeen.local.cwd, directory);
+  assert.deepEqual(optionsSeen.local.settingSources, []);
+  assert.deepEqual(optionsSeen.tools, []);
+});
 
 test("proxy completes a text turn through a fake SDK agent", async (t) => {
   process.env.XDG_STATE_HOME = await mkdtemp(join(tmpdir(), "cursor-sdk-test-"));
@@ -109,6 +146,122 @@ test("proxy completes a text turn through a fake SDK agent", async (t) => {
   assert.equal(json.choices[0].message.content, "hello from cursor");
   assert.equal(json.usage.prompt_tokens, 12);
   assert.equal(json.usage.completion_tokens, 4);
+});
+
+
+test("streamed Cursor usage accumulates cumulative SDK events and is emitted once", async (t) => {
+  process.env.XDG_STATE_HOME = await mkdtemp(join(tmpdir(), "cursor-sdk-usage-stream-test-"));
+  const finalUsage = {
+    inputTokens: 15,
+    outputTokens: 5,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 20,
+    reasoningTokens: 2,
+  };
+  setCursorSdkOverridesForTests({
+    createAgent: async () =>
+      fakeAgent(async () => ({
+        ...fakeRun("agent-test", async function* () {
+          yield {
+            type: "usage",
+            agent_id: "agent-test",
+            run_id: "run-test",
+            usage: {
+              inputTokens: 10,
+              outputTokens: 2,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 12,
+              reasoningTokens: 1,
+            },
+          };
+          yield {
+            type: "usage",
+            agent_id: "agent-test",
+            run_id: "run-test",
+            usage: finalUsage,
+          };
+        }),
+        usage: finalUsage,
+      })),
+  });
+  await startProxy();
+  t.after(async () => {
+    await releaseProxy();
+    setCursorSdkOverridesForTests();
+  });
+
+  const response = await request({
+    model: "fake-model",
+    stream: true,
+    messages: [{ role: "user", content: "usage" }],
+  }, "usage-stream");
+  assert.equal(response.status, 200);
+  const events = (await response.text())
+    .split("\n")
+    .filter((line) => line.startsWith("data: {"))
+    .map((line) => JSON.parse(line.slice(6)));
+  const usageEvents = events.filter((event) => event.usage);
+  assert.equal(usageEvents.length, 1);
+  assert.deepEqual(usageEvents[0].usage, {
+    prompt_tokens: 15,
+    completion_tokens: 5,
+    total_tokens: 20,
+    completion_tokens_details: { reasoning_tokens: 2 },
+  });
+});
+
+test("completed run usage is a fallback when the SDK stream omits usage events", async (t) => {
+  process.env.XDG_STATE_HOME = await mkdtemp(join(tmpdir(), "cursor-sdk-usage-fallback-test-"));
+  const finalUsage = {
+    inputTokens: 11,
+    outputTokens: 4,
+    cacheReadTokens: 3,
+    cacheWriteTokens: 1,
+    totalTokens: 19,
+    reasoningTokens: 0,
+  };
+  setCursorSdkOverridesForTests({
+    createAgent: async () =>
+      fakeAgent(async () => ({
+        ...fakeRun("agent-test", async function* () {
+          yield {
+            type: "assistant",
+            agent_id: "agent-test",
+            run_id: "run-test",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "done" }],
+            },
+          };
+        }),
+        usage: finalUsage,
+      })),
+  });
+  await startProxy();
+  t.after(async () => {
+    await releaseProxy();
+    setCursorSdkOverridesForTests();
+  });
+
+  const response = await request({
+    model: "fake-model",
+    stream: true,
+    messages: [{ role: "user", content: "usage fallback" }],
+  }, "usage-fallback");
+  assert.equal(response.status, 200);
+  const events = (await response.text())
+    .split("\n")
+    .filter((line) => line.startsWith("data: {"))
+    .map((line) => JSON.parse(line.slice(6)));
+  const final = events.find((event) => event.usage);
+  assert.deepEqual(final.usage, {
+    prompt_tokens: 15,
+    completion_tokens: 4,
+    total_tokens: 19,
+    prompt_tokens_details: { cached_tokens: 3, cache_write_tokens: 1 },
+  });
 });
 
 test("proxy parks a custom tool in OpenCode and resumes the same run", async (t) => {
@@ -189,6 +342,99 @@ test("proxy parks a custom tool in OpenCode and resumes the same run", async (t)
   const secondJson = await second.json();
   assert.equal(secondJson.choices[0].message.content, "tool said: README CONTENT");
   assert.equal(secondJson.choices[0].finish_reason, "stop");
+});
+
+
+test("usage is split across parked tool boundaries without double counting", async (t) => {
+  process.env.XDG_STATE_HOME = await mkdtemp(join(tmpdir(), "cursor-sdk-tool-usage-test-"));
+  let toolPromise;
+  setCursorSdkOverridesForTests({
+    createAgent: async () =>
+      fakeAgent(async (_message, sendOptions) => {
+        toolPromise = sendOptions.local.customTools.read.execute(
+          { path: "README.md" },
+          { toolCallId: "call_usage" },
+        );
+        return fakeRun("agent-test", async function* () {
+          yield {
+            type: "usage",
+            agent_id: "agent-test",
+            run_id: "run-test",
+            usage: {
+              inputTokens: 10,
+              outputTokens: 2,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 12,
+            },
+          };
+          await toolPromise;
+          yield {
+            type: "usage",
+            agent_id: "agent-test",
+            run_id: "run-test",
+            usage: {
+              inputTokens: 15,
+              outputTokens: 5,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 20,
+            },
+          };
+        });
+      }),
+  });
+  await startProxy();
+  t.after(async () => {
+    await releaseProxy();
+    setCursorSdkOverridesForTests();
+  });
+
+  const tools = [{
+    type: "function",
+    function: {
+      name: "read",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+      },
+    },
+  }];
+
+  const first = await request({
+    model: "fake-model",
+    stream: false,
+    tools,
+    messages: [{ role: "user", content: "read" }],
+  }, "tool-usage");
+  const firstJson = await first.json();
+  assert.deepEqual(firstJson.usage, {
+    prompt_tokens: 10,
+    completion_tokens: 2,
+    total_tokens: 12,
+  });
+  assert.equal(firstJson.choices[0].finish_reason, "tool_calls");
+
+  const second = await request({
+    model: "fake-model",
+    stream: false,
+    tools,
+    messages: [
+      { role: "user", content: "read" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: firstJson.choices[0].message.tool_calls,
+      },
+      { role: "tool", tool_call_id: "call_usage", content: "README" },
+    ],
+  }, "tool-usage");
+  const secondJson = await second.json();
+  assert.deepEqual(secondJson.usage, {
+    prompt_tokens: 5,
+    completion_tokens: 3,
+    total_tokens: 8,
+  });
 });
 
 test("proxy groups parallel custom tools and resumes after both results", async (t) => {
