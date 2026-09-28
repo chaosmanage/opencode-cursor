@@ -174,7 +174,7 @@ function jsonCompletion(
   });
 }
 
-function streamCompletion(
+function streamCollectedCompletion(
   id: string,
   model: string,
   collected: Collected,
@@ -239,6 +239,140 @@ function streamCompletion(
   });
 }
 
+function streamBridgeCompletion(
+  id: string,
+  model: string,
+  bridge: ParkedBridge,
+): Response {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      let latestUsage: OpenAIUsage | undefined;
+      const created = Math.floor(Date.now() / 1000);
+      const send = (payload: unknown) => {
+        if (closed || cancelled) return;
+        controller.enqueue(encoder.encode("data: " + JSON.stringify(payload) + "\n\n"));
+      };
+      const heartbeat = setInterval(() => {
+        if (!closed && !cancelled) {
+          controller.enqueue(encoder.encode(": ping\n\n"));
+        }
+      }, SSE_HEARTBEAT_MS);
+      heartbeat.unref?.();
+
+      try {
+        send({
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+        });
+
+        const boundary = await consumeBridge(bridge, (event: SDKMessage) => {
+          if (event.type === "assistant") {
+            for (const block of event.message.content) {
+              if (block.type !== "text" || !block.text) continue;
+              send({
+                id,
+                object: "chat.completion.chunk",
+                created,
+                model,
+                choices: [{ index: 0, delta: { content: block.text }, finish_reason: null }],
+              });
+            }
+          } else if (event.type === "thinking" && event.text) {
+            send({
+              id,
+              object: "chat.completion.chunk",
+              created,
+              model,
+              choices: [{ index: 0, delta: { reasoning_content: event.text }, finish_reason: null }],
+            });
+          } else if (event.type === "usage") {
+            const current = toOpenAIUsage(event.usage);
+            if (current) {
+              latestUsage = usageGrowth(current, bridge.lastUsage);
+              bridge.lastUsage = current;
+            }
+          } else if (event.type === "status" && event.status === "ERROR") {
+            throw new Error(event.message || "Cursor agent failed");
+          }
+        });
+
+        const tools = boundary.kind === "park" ? boundary.tools : [];
+        for (const [index, tool] of tools.entries()) {
+          send({
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [{
+              index: 0,
+              delta: {
+                tool_calls: [{
+                  index,
+                  id: tool.id,
+                  type: "function",
+                  function: { name: tool.name, arguments: tool.arguments },
+                }],
+              },
+              finish_reason: null,
+            }],
+          });
+        }
+
+        send({
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [{
+            index: 0,
+            delta: {},
+            finish_reason: tools.length ? "tool_calls" : "stop",
+          }],
+          ...(latestUsage ? { usage: latestUsage } : {}),
+        });
+        if (boundary.kind === "done") closeBridge(bridge.sessionKey);
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        closeBridge(bridge.sessionKey, failure);
+        send({
+          error: {
+            message: error instanceof Error ? error.message : String(error),
+            type: "server_error",
+            code: "cursor_stream_error",
+          },
+        });
+      } finally {
+        clearInterval(heartbeat);
+        if (!cancelled) {
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        }
+        closed = true;
+      }
+    },
+    cancel(reason) {
+      cancelled = true;
+      closeBridge(
+        bridge.sessionKey,
+        reason instanceof Error ? reason : new Error("OpenCode disconnected from Cursor stream"),
+      );
+    },
+  });
+  return new Response(body, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    },
+  });
+}
+
 async function handleChat(req: IncomingMessage): Promise<Response> {
   const body = await readJson(req) as ChatCompletionRequest;
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -263,7 +397,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
         reasoning: "",
         usage: toOpenAIUsage(result.usage),
       };
-      return body.stream ? streamCompletion(id, body.model || selection.id, collected, []) : jsonCompletion(id, body.model || selection.id, collected, []);
+      return body.stream ? streamCollectedCompletion(id, body.model || selection.id, collected, []) : jsonCompletion(id, body.model || selection.id, collected, []);
     } finally {
       agent.close();
     }
@@ -327,6 +461,10 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
     }
   }
 
+  if (body.stream) {
+    return streamBridgeCompletion(id, body.model || selection.id, bridge);
+  }
+
   const { boundary, collected } = await collectBoundary(bridge);
   if (collected.statusError) {
     closeBridge(key, new Error(collected.statusError));
@@ -336,9 +474,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
   if (boundary.kind === "done") {
     closeBridge(key);
   }
-  return body.stream
-    ? streamCompletion(id, body.model || selection.id, collected, tools)
-    : jsonCompletion(id, body.model || selection.id, collected, tools);
+  return jsonCompletion(id, body.model || selection.id, collected, tools);
 }
 
 async function nodeResponse(res: ServerResponse, response: Response): Promise<void> {
@@ -349,10 +485,18 @@ async function nodeResponse(res: ServerResponse, response: Response): Promise<vo
     return;
   }
   const reader = response.body.getReader();
-  while (true) {
-    const next = await reader.read();
-    if (next.done) break;
-    res.write(Buffer.from(next.value));
+  const abort = () => {
+    void reader.cancel(new Error("OpenCode HTTP client disconnected")).catch(() => {});
+  };
+  res.once("close", abort);
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      res.write(Buffer.from(next.value));
+    }
+  } finally {
+    res.off("close", abort);
   }
   res.end();
 }
