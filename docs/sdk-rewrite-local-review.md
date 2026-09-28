@@ -34,11 +34,11 @@ Normal Cursor agents receive only the SDK `mcp` capability when OpenCode tools a
 ## Models
 
 - Uses `Cursor.models.list()`.
-- Maps documented SDK variants to OpenCode variants.
+- Maps SDK preset variants and dynamically discovered parameter values (including reasoning-effort controls) to OpenCode variants.
 - Caches the last successful SDK catalog.
 - Refreshes after sign-in and periodically.
 - Does not use private model RPCs or private metadata.
-- Context/output limits remain conservative fallbacks because the verified SDK catalog does not expose authoritative values for those OpenCode fields.
+- Context limits are not guessed: Cursor models use OpenCode's `context: 0` sentinel so OpenCode does not compact against a fabricated window; the persistent Cursor agent owns context management. Output metadata remains conservative because the SDK catalog does not expose an authoritative output limit.
 
 ## Sessions and requests
 

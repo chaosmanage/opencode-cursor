@@ -16,7 +16,7 @@ The login API can expose the official browser URL through `onLoginUrl`. The SDK'
 
 `Cursor.models.list()` returns canonical model IDs, display names, parameter definitions, and variants. Model selections are passed back as `{ id, params? }`.
 
-The SDK does not expose all OpenCode provider metadata fields such as authoritative context/output limits, so the plugin uses conservative fallback limits rather than private metadata.
+The SDK does not expose an authoritative numeric context window in model discovery. OpenCode v2 requires a context integer, so Cursor models use OpenCode's `0` sentinel to disable OpenCode-side overflow compaction; the persistent Cursor agent owns context management. Output metadata remains conservative.
 
 ## Local agents
 
@@ -79,28 +79,25 @@ No documented API used by this rewrite reports whole-account monthly percentage 
 - native Cursor shell/edit/write/task execution
 
 
-## Documented context-window metadata
+## Context-window ownership
 
-`Cursor.models.list()` does not currently expose context-window or output-token
-limits. The plugin therefore uses Cursor's public model documentation for known
-default context windows and keeps `200_000` only as the conservative fallback
-for unknown/new model IDs.
+`Cursor.models.list()` does not currently expose an authoritative numeric
+context window. The plugin therefore does not hardcode per-model context sizes
+and does not assign a guessed fallback to newly added models.
 
-The mapping intentionally uses **default context**, not the separately documented
-**Max Context** value. Max Context may require a model-specific mode or variant,
-and the SDK does not currently expose a generic field that lets OpenCode select
-that larger window safely.
+OpenCode v2 requires `limit.context` to be an integer. Cursor models are
+registered with `context: 0`, OpenCode's sentinel for disabling its own
+context-overflow compaction. Normal OpenCode sessions resume a durable Cursor
+agent, so Cursor owns the conversation state and compacts it against the actual
+selected model's context window.
 
-Current documented overrides include:
+## Dynamic model parameters and thinking levels
 
-- Claude Fable 5 / 5.1: 300k
-- Claude Opus 5 / 5.5: 300k
-- Claude Sonnet 5: 200k
-- Composer 2.5: 200k
-- Gemini 3.1 Pro / 3.8 Flash: 200k
-- GPT-5.5 and GPT-5.6 Luna/Sol/Terra: 272k
-- Grok 4.5 / 4.6 / 4.7: 256k
-- Muse Spark 1.3: 300k
+The plugin treats the SDK catalog as the source of truth for model-specific
+controls. Preset `variants` are mapped directly. In addition, values exposed
+through each model's `parameters` array are surfaced dynamically as OpenCode
+variants when they are not already represented by a preset variant.
 
-Unknown model IDs remain at 200k rather than guessing or consulting private
-Cursor endpoints.
+This covers account/team-specific controls such as reasoning effort without
+hardcoding model names or thinking levels. New parameter values returned by a
+future SDK catalog become selectable after the catalog refreshes.

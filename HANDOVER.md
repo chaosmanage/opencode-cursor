@@ -68,11 +68,11 @@ Live login on the VPS is intentionally deferred until the user performs the brow
 ### Phase 3 — Official model catalog/provider registration — COMPLETE
 
 - Uses `Cursor.models.list()`.
-- Maps SDK model variants/parameters into OpenCode variants.
+- Maps SDK preset variants and dynamically discovered parameter values into OpenCode variants, including model-specific reasoning/thinking controls.
 - Caches the last successful SDK catalog.
 - Refreshes the catalog after login and periodically.
 - Keeps stale cache on transient discovery failure.
-- Uses conservative fallback context/output limits instead of private metadata.
+- Does not hardcode context-window limits. Cursor models register with OpenCode `context: 0`, disabling OpenCode-side overflow compaction so the persistent Cursor agent manages its real model context. Output metadata remains conservative.
 - Registers the Cursor provider through the OpenCode 2 provider API.
 
 ### Phase 4 — Local proxy/text inference — COMPLETE

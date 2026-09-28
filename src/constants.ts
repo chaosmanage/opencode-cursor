@@ -8,7 +8,6 @@ export const SESSION_HEADER = "x-opencode-cursor-session";
 export const AGENT_HEADER = "x-opencode-cursor-agent";
 export const KIND_HEADER = "x-opencode-cursor-kind";
 
-export const FALLBACK_CONTEXT_WINDOW = 200_000;
 export const FALLBACK_MAX_TOKENS = 64_000;
 export const MODEL_REFRESH_INTERVAL_MS = 10 * 60_000;
 export const PARK_SETTLE_MS = 300;

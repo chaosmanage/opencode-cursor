@@ -1,9 +1,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { type ModelSelection, type SDKModel } from "@cursor/sdk";
+import {
+  type ModelParameterValue,
+  type ModelSelection,
+  type SDKModel,
+} from "@cursor/sdk";
 import { cursorSdk } from "./sdk.js";
-import { FALLBACK_CONTEXT_WINDOW, FALLBACK_MAX_TOKENS } from "./constants.js";
+import { FALLBACK_MAX_TOKENS } from "./constants.js";
 
 export interface CursorModel {
   id: string;
@@ -22,70 +26,105 @@ function variantId(displayName: string, index: number): string {
   return clean || "variant-" + (index + 1);
 }
 
+function paramsKey(params: readonly ModelParameterValue[] | undefined): string {
+  return JSON.stringify(
+    [...(params || [])]
+      .map((item) => ({ id: item.id, value: item.value }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+}
 
-/**
- * Default context windows published in Cursor's public model documentation.
- *
- * The SDK's model list currently does not expose context-window metadata, so
- * only documented model IDs are overridden here. Unknown/new model IDs remain
- * on FALLBACK_CONTEXT_WINDOW until Cursor documents them or the SDK grows a
- * first-class context-limit field.
- *
- * We intentionally advertise the documented default context, not Max Context:
- * Max Context can require a distinct mode/variant and the SDK does not expose a
- * stable generic signal that lets OpenCode select it safely.
- */
-const DOCUMENTED_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
-  "composer-2.5": 200_000,
-  "claude-fable-5": 300_000,
-  "claude-fable-5-1": 300_000,
-  "claude-opus-5": 300_000,
-  "claude-opus-5-5": 300_000,
-  "claude-sonnet-5": 200_000,
-  "gemini-3.1-pro": 200_000,
-  "gemini-3.8-flash": 200_000,
-  "gpt-5.5": 272_000,
-  "gpt-5.6-luna": 272_000,
-  "gpt-5.6-sol": 272_000,
-  "gpt-5.6-terra": 272_000,
-  "grok-4.5": 256_000,
-  "grok-4.6": 256_000,
-  "grok-4.7": 256_000,
-  "muse-spark-1.3": 300_000,
-};
+function withParam(
+  base: readonly ModelParameterValue[],
+  id: string,
+  value: string,
+): ModelParameterValue[] {
+  const next = base.filter((item) => item.id !== id);
+  next.push({ id, value });
+  return next;
+}
 
-export function contextWindowForModel(modelId: string): number {
-  const normalized = modelId.trim().toLowerCase();
-  const direct = DOCUMENTED_CONTEXT_WINDOWS[normalized];
-  if (direct) return direct;
-
-  // Cursor documents Fast as a speed tier for these models; it does not
-  // change the default context boundary, so a separately surfaced "-fast"
-  // SDK row can inherit the base model's documented default context.
-  if (normalized.endsWith("-fast")) {
-    return DOCUMENTED_CONTEXT_WINDOWS[normalized.slice(0, -5)] ?? FALLBACK_CONTEXT_WINDOW;
+function discoveredSelections(row: SDKModel): {
+  defaultSelection: ModelSelection;
+  variants: Record<string, ModelSelection>;
+} {
+  const defaultParams: ModelParameterValue[] = [];
+  for (const parameter of row.parameters || []) {
+    const first = parameter.values?.[0];
+    if (first) defaultParams.push({ id: parameter.id, value: first.value });
   }
 
-  return FALLBACK_CONTEXT_WINDOW;
+  let defaultSelection: ModelSelection = {
+    id: row.id,
+    ...(defaultParams.length ? { params: defaultParams } : {}),
+  };
+  const variants: Record<string, ModelSelection> = {};
+  const seen = new Set<string>();
+
+  const addVariant = (
+    label: string,
+    selection: ModelSelection,
+    index: number,
+    fallbackPrefix?: string,
+  ) => {
+    const key = paramsKey(selection.params);
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    let id = variantId(label, index);
+    if (variants[id]) {
+      id = variantId((fallbackPrefix ? fallbackPrefix + " " : "") + label, index);
+    }
+    let suffix = 2;
+    const base = id;
+    while (variants[id]) id = base + "-" + suffix++;
+
+    variants[id] = selection;
+  };
+
+  for (const [index, variant] of (row.variants || []).entries()) {
+    const selection: ModelSelection = {
+      id: row.id,
+      ...(variant.params?.length ? { params: variant.params } : {}),
+    };
+    addVariant(variant.displayName, selection, index);
+    if (variant.isDefault) defaultSelection = selection;
+  }
+
+  // Cursor documents parameters as the source of truth for model-specific
+  // controls such as reasoning effort. Preset variants do not necessarily
+  // enumerate every allowed parameter value, so surface any remaining values
+  // dynamically instead of hardcoding per-model thinking levels.
+  for (const [parameterIndex, parameter] of (row.parameters || []).entries()) {
+    if (!parameter.values || parameter.values.length <= 1) continue;
+    for (const [valueIndex, value] of parameter.values.entries()) {
+      const params = withParam(defaultParams, parameter.id, value.value);
+      const selection: ModelSelection = { id: row.id, params };
+      addVariant(
+        value.displayName || value.value,
+        selection,
+        (row.variants?.length || 0) + parameterIndex * 100 + valueIndex,
+        parameter.displayName || parameter.id,
+      );
+    }
+  }
+
+  return { defaultSelection, variants };
 }
 
 export function modelsFromSdk(rows: SDKModel[]): CursorModel[] {
   return rows.map((row) => {
-    const variants: Record<string, ModelSelection> = {};
-    let defaultSelection: ModelSelection = { id: row.id };
-    for (const [index, variant] of (row.variants || []).entries()) {
-      const id = variantId(variant.displayName, index);
-      const selection = { id: row.id, params: variant.params };
-      variants[id] = selection;
-      if (variant.isDefault) defaultSelection = selection;
-    }
+    const selections = discoveredSelections(row);
     return {
       id: row.id,
       name: row.displayName || row.id,
       ...(row.description ? { description: row.description } : {}),
-      defaultSelection,
-      variants,
-      contextWindow: contextWindowForModel(row.id),
+      ...selections,
+      // OpenCode uses context=0 as its sentinel for "do not perform
+      // OpenCode-side context overflow compaction". Cursor owns the durable
+      // agent conversation and compacts it against the selected model's real
+      // context window, so we intentionally do not invent a numeric limit.
+      contextWindow: 0,
       maxTokens: FALLBACK_MAX_TOKENS,
     };
   });
