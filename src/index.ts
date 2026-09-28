@@ -70,6 +70,18 @@ export function buildProviderModel(model: CursorModel): ModelInfo {
 }
 
 let lastRefresh = 0;
+
+async function primeCatalog(): Promise<void> {
+  try {
+    await refreshCursorModels();
+    lastRefresh = Date.now();
+  } catch (error) {
+    log.warn("Could not prime Cursor SDK model catalog", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function refreshCatalog(reload: () => Promise<void>): Promise<void> {
   const now = Date.now();
   if (now - lastRefresh < MODEL_REFRESH_INTERVAL_MS) return;
@@ -135,6 +147,7 @@ export const CursorSdkPlugin: Plugin.Plugin = {
     }
     const directory = ctx.location.directory;
     await acquireProxy();
+    await primeCatalog();
 
     await ctx.provider.transform((providers) => {
       providers.add({
