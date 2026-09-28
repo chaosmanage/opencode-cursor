@@ -51,7 +51,7 @@ Image input is mapped to SDK image inputs for direct user messages and tool resu
 
 ## Usage and limits
 
-Per-turn token usage is mapped from documented Cursor SDK usage events. Cumulative usage is delta-accounted across parked tool continuations to avoid double counting.
+Per-turn token usage is mapped from documented Cursor SDK usage events. Cumulative usage is delta-accounted across parked tool continuations to avoid double counting. Documented raw/charged cost is exposed separately as per-run `cursor_cost` deltas using `Agent.getUsage()` baselines.
 
 This plugin does **not** scrape Cursor's dashboard and does not claim to know account-wide monthly quota percentage or billing-cycle remaining allowance.
 

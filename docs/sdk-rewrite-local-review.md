@@ -64,6 +64,7 @@ Covered behaviors include one tool, parallel tools, parked callback resume, text
 ## Usage and errors
 
 - Input/output/cache/reasoning token usage maps to OpenAI-compatible usage.
+- Documented raw/charged cost is emitted as per-run `cursor_cost` deltas using an `Agent.getUsage()` baseline.
 - Cumulative usage is delta-accounted across parked continuations.
 - Auth, rate-limit, configuration, busy-agent, and network failures have explicit mappings.
 - Account-wide monthly quota is not fabricated or scraped.
@@ -129,7 +130,7 @@ These remain pending until an interactive Cursor SDK login is completed:
 - real image input;
 - real custom-tool invocation against Cursor;
 - real cancellation;
-- real usage/cost response;
+- real usage/cost response against the Cursor backend;
 - real OpenCode end-to-end inference.
 
 `scripts/live-sdk-smoke.mjs` is the first live validation harness. It exits without inference when logged out.
@@ -139,11 +140,10 @@ These remain pending until an interactive Cursor SDK login is completed:
 1. Authenticated live SDK validation.
 2. Full OpenCode model-picker validation after a real catalog is available.
 3. Real backend validation of model variants.
-4. Cost telemetry is not yet emitted into OpenAI responses; token usage is.
-5. No account-wide quota/remaining-plan telemetry through this SDK surface.
-6. No native SDK Ask mode.
-7. PDF input is not advertised.
-8. Rewrite release/version number remains undecided.
+4. No account-wide quota/remaining-plan telemetry through this SDK surface.
+5. No native SDK Ask mode.
+6. PDF input is not advertised.
+7. Rewrite release/version number remains undecided.
 
 ## PR gate
 
