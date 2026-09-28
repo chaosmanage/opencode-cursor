@@ -16,10 +16,13 @@ export async function authorizeWithCursorSdk() {
   const status = await cursorSdk().authStatus();
   if (status.status === "logged-in") {
     return {
-      url: "",
+      // OpenCode requires an http(s) URL for OAuth-style integrations even
+      // when the SDK is already authenticated. Use a harmless Cursor URL
+      // while resolving the callback immediately with our non-secret marker.
+      url: "https://cursor.com/",
       instructions: status.email
-        ? "Cursor SDK is already signed in as " + status.email + ". Click Complete."
-        : "Cursor SDK is already signed in. Click Complete.",
+        ? "Cursor SDK is already signed in as " + status.email + ". OpenCode can complete immediately."
+        : "Cursor SDK is already signed in. OpenCode can complete immediately.",
       mode: "auto" as const,
       callback: Promise.resolve(sdkSignInMarker()),
     };

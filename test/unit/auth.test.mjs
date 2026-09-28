@@ -36,3 +36,15 @@ test("auth flow relays the SDK login URL and discards the returned key", async (
   assert.equal(marker.access, "cursor-sdk");
   assert.equal(JSON.stringify(marker).includes("super-secret-key"), false);
 });
+
+
+test("already-authenticated SDK returns a valid URL for OpenCode OAuth UI", async (t) => {
+  setCursorSdkOverridesForTests({
+    authStatus: async () => ({ status: "logged-in", email: "dev@example.com" }),
+  });
+  t.after(() => setCursorSdkOverridesForTests());
+
+  const auth = await authorizeWithCursorSdk();
+  assert.match(auth.url, /^https?:\/\//);
+  assert.equal((await auth.callback).access, "cursor-sdk");
+});
