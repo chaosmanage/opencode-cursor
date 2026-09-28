@@ -25,7 +25,13 @@ import { log } from "./log.js";
 import { primaryPrompt, metaPrompt, recoveryPrompt, hasPriorConversation } from "./prompt.js";
 import { getSession, setSession, forgetSession } from "./session-store.js";
 import { ToolParking } from "./tools.js";
-import { toOpenAIUsage, usageGrowth, type OpenAIUsage } from "./usage.js";
+import {
+  toOpenAIUsage,
+  usageGrowth,
+  costGrowth,
+  type CursorCostDelta,
+  type OpenAIUsage,
+} from "./usage.js";
 import type { ChatCompletionRequest, OpenAIMessage } from "./openai.js";
 import { toolResultMessages } from "./openai.js";
 import { cursorSdk } from "./sdk.js";
@@ -137,7 +143,16 @@ interface Collected {
   content: string;
   reasoning: string;
   usage?: OpenAIUsage;
+  cost?: CursorCostDelta;
   statusError?: string;
+}
+
+async function readAgentCost(agent: SDKAgent) {
+  try {
+    return (await agent.getUsage()).cost;
+  } catch {
+    return undefined;
+  }
 }
 
 async function collectBoundary(bridge: ParkedBridge): Promise<{ boundary: Awaited<ReturnType<typeof consumeBridge>>; collected: Collected }> {
@@ -159,6 +174,9 @@ async function collectBoundary(bridge: ParkedBridge): Promise<{ boundary: Awaite
       collected.statusError = event.message || "Cursor agent failed";
     }
   });
+  if (boundary.kind === "done") {
+    collected.cost = costGrowth(await readAgentCost(bridge.agent), bridge.costBaseline);
+  }
   return { boundary, collected };
 }
 
@@ -190,6 +208,7 @@ function jsonCompletion(
       finish_reason: tools.length ? "tool_calls" : "stop",
     }],
     ...(collected.usage ? { usage: collected.usage } : {}),
+    ...(collected.cost ? { cursor_cost: collected.cost } : {}),
   });
 }
 
@@ -240,6 +259,7 @@ function streamCollectedCompletion(
           id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
           choices: [{ index: 0, delta: {}, finish_reason: tools.length ? "tool_calls" : "stop" }],
           ...(collected.usage ? { usage: collected.usage } : {}),
+          ...(collected.cost ? { cursor_cost: collected.cost } : {}),
         });
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } finally {
@@ -343,6 +363,10 @@ function streamBridgeCompletion(
           });
         }
 
+        const finalCost =
+          boundary.kind === "done"
+            ? costGrowth(await readAgentCost(bridge.agent), bridge.costBaseline)
+            : undefined;
         send({
           id,
           object: "chat.completion.chunk",
@@ -354,6 +378,7 @@ function streamBridgeCompletion(
             finish_reason: tools.length ? "tool_calls" : "stop",
           }],
           ...(latestUsage ? { usage: latestUsage } : {}),
+          ...(finalCost ? { cursor_cost: finalCost } : {}),
         });
         if (boundary.kind === "done") closeBridge(bridge.sessionKey);
       } catch (error) {
@@ -408,6 +433,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
       local: { cwd, settingSources: [], sandboxOptions: { enabled: true } },
     });
     try {
+      const costBaseline = await readAgentCost(agent);
       const run = await agent.send(metaPrompt(messages), { model: selection, mode: "agent" });
       const result = await run.wait();
       if (result.status === "error") throw new Error(result.error?.message || "Cursor utility request failed");
@@ -415,6 +441,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
         content: result.result || "",
         reasoning: "",
         usage: toOpenAIUsage(result.usage),
+        cost: costGrowth(await readAgentCost(agent), costBaseline),
       };
       return body.stream ? streamCollectedCompletion(id, body.model || selection.id, collected, []) : jsonCompletion(id, body.model || selection.id, collected, []);
     } finally {
@@ -431,6 +458,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
     const parking = new ToolParking();
     const opened = await openAgent(key, cwd, selection, mode(req), parking, body);
     const agent = opened.agent;
+    const costBaseline = await readAgentCost(agent);
     const prompt =
       !opened.resumed && hasPriorConversation(messages)
         ? recoveryPrompt(messages)
@@ -447,6 +475,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
       run,
       tools: parking,
       iterator: run.stream()[Symbol.asyncIterator](),
+      costBaseline,
       createdAt: Date.now(),
       lastActivity: Date.now(),
       closed: false,
@@ -462,6 +491,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
         const parking = new ToolParking();
         const opened = await openAgent(key, cwd, selection, mode(req), parking, body);
         const agent = opened.agent;
+        const costBaseline = await readAgentCost(agent);
         const prompt =
           !opened.resumed && hasPriorConversation(messages)
             ? recoveryPrompt(messages)

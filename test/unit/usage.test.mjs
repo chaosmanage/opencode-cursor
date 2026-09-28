@@ -21,3 +21,22 @@ test("usage growth avoids double counting cumulative resumed turns", () => {
     prompt_tokens: 8, completion_tokens: 4, total_tokens: 12,
   });
 });
+
+import { costGrowth } from "../../dist/usage.js";
+
+test("Cursor cost uses cumulative-agent growth rather than total history", () => {
+  assert.deepEqual(
+    costGrowth(
+      { rawCostCents: 12.5, chargedCents: 4.25 },
+      { rawCostCents: 10, chargedCents: 4 },
+    ),
+    { raw_cost_cents: 2.5, charged_cents: 0.25 },
+  );
+  assert.equal(
+    costGrowth(
+      { rawCostCents: 10, chargedCents: 4 },
+      { rawCostCents: 10, chargedCents: 4 },
+    ),
+    undefined,
+  );
+});

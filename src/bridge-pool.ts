@@ -1,4 +1,4 @@
-import type { Run, SDKAgent, SDKMessage } from "@cursor/sdk";
+import type { Run, SDKAgent, SDKMessage, UsageCost } from "@cursor/sdk";
 import { PARKED_TURN_TTL_MS, PARK_SETTLE_MS, TURN_STALL_MS } from "./constants.js";
 import { ToolParking } from "./tools.js";
 import type { OpenAIUsage } from "./usage.js";
@@ -12,6 +12,7 @@ export interface ParkedBridge {
   iterator: AsyncIterator<SDKMessage>;
   inflight?: Promise<IteratorResult<SDKMessage>>;
   lastUsage?: OpenAIUsage;
+  costBaseline?: UsageCost;
   createdAt: number;
   lastActivity: number;
   timer?: ReturnType<typeof setTimeout>;

@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@cursor/sdk";
+import type { TokenUsage, UsageCost } from "@cursor/sdk";
 
 export interface OpenAIUsage {
   prompt_tokens: number;
@@ -61,4 +61,21 @@ export function usageGrowth(current: OpenAIUsage, previous?: OpenAIUsage): OpenA
       : {}),
     ...(reasoning ? { completion_tokens_details: { reasoning_tokens: reasoning } } : {}),
   };
+}
+
+
+export interface CursorCostDelta {
+  raw_cost_cents: number;
+  charged_cents: number;
+}
+
+export function costGrowth(
+  current: UsageCost | undefined,
+  baseline: UsageCost | undefined,
+): CursorCostDelta | undefined {
+  if (!current) return undefined;
+  const raw = Math.max(0, current.rawCostCents - (baseline?.rawCostCents ?? 0));
+  const charged = Math.max(0, current.chargedCents - (baseline?.chargedCents ?? 0));
+  if (raw === 0 && charged === 0) return undefined;
+  return { raw_cost_cents: raw, charged_cents: charged };
 }
