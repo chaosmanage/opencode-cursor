@@ -23,19 +23,72 @@ For normal agent turns the plugin offers Cursor only the SDK `mcp` capability an
 
 Ambient Cursor setting sources are disabled by default, so project/user Cursor MCP configuration is not implicitly loaded into the provider.
 
-## Authentication
+## Install this branch
 
-Run OpenCode's Cursor sign-in flow. The plugin calls `Cursor.auth.login()` and relays the official Cursor login URL.
+This SDK rewrite is on the fork's `sdk-rewrite` branch and has not been released upstream. Install it from a local checkout on the machine running the OpenCode server:
 
-The Cursor SDK owns the credential lifecycle and default credential store. The plugin does not implement PKCE/OAuth itself, does not parse or copy the SDK credential, and stores only a non-secret OpenCode integration marker.
+```bash
+git clone --branch sdk-rewrite https://github.com/chaosmanage/opencode-cursor.git
+cd opencode-cursor
+npm ci
+npm run build
+```
 
-If the SDK uses its default store, its login is stored by the SDK under `~/.cursor/sdk/auth.json`.
+In the project where you use OpenCode, add the built entrypoint to `opencode.json` (replace the path with your checkout's absolute path):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["/absolute/path/to/opencode-cursor/dist/index.js"]
+}
+```
+
+Use OpenCode 2's plural `plugins` key ([plugin configuration](https://opencode.ai/v2/docs/plugins)). Do not install the published `@openchamber/opencode-cursor@2.5.1` package for this branch: the fork's built checkout is the tested artifact. Start or restart OpenCode in that project after changing the config, then check `opencode plugin list`.
+
+## Sign in with the Cursor SDK
+
+From the OpenCode project with this plugin loaded, run:
+
+```bash
+opencode auth login cursor --method cursor-sdk
+```
+
+Open the Cursor URL shown by OpenCode, complete sign-in in your browser, and return to the terminal. The plugin calls `Cursor.auth.login({ openBrowser: false, onLoginUrl })`; the official SDK stores its credential and OpenCode stores only a non-secret integration marker. If the SDK is already signed in, this command completes without a new browser login. Check the available Cursor models with `opencode models`.
+
+If OpenCode cannot present the browser URL, you can sign in directly with the SDK **from the checkout directory**:
+
+```bash
+node --input-type=module -e 'import { Cursor } from "@cursor/sdk"; await Cursor.auth.login({ openBrowser: false, onLoginUrl: (url) => console.log(url) }); console.log("Cursor SDK signed in")'
+cd /absolute/path/to/your-opencode-project
+opencode auth login cursor --method cursor-sdk
+```
+
+The first command prints the official URL and waits for browser sign-in; the second records OpenCode's integration marker. The SDK's default credential store is `~/.cursor/sdk/auth.json`. Keep that file private; the plugin does not read or copy it.
+
+To check SDK sign-in status without printing a credential, run this from the checkout directory:
+
+```bash
+node --input-type=module -e 'import { Cursor } from "@cursor/sdk"; console.log((await Cursor.auth.status()).status)'
+```
+
+### Sign out
+
+Remove the OpenCode marker, then forget the SDK's local credential:
+
+```bash
+cd /absolute/path/to/your-opencode-project
+opencode auth logout cursor
+cd /absolute/path/to/opencode-cursor
+node --input-type=module -e 'import { Cursor } from "@cursor/sdk"; await Cursor.auth.logout(); console.log((await Cursor.auth.status()).status)'
+```
+
+`Cursor.auth.logout()` removes the locally stored SDK login. It does **not** revoke the minted API key on Cursor's server; revoke that key in the Cursor dashboard's API keys page if you need it invalidated before expiry. Restart any running OpenCode server after signing out so existing sessions do not keep using an active agent. To switch accounts, sign out using both steps, then sign in again.
 
 ## Models
 
 Models are discovered with `Cursor.models.list()` after SDK sign-in. SDK variants are mapped to OpenCode model variants and the last successful catalog is cached for startup.
 
-The SDK does not currently expose every field OpenCode's provider schema expects, so context/output limits use conservative plugin defaults rather than private model metadata.
+The SDK does not currently expose every field OpenCode's provider schema expects. Context limits use a positive SDK value when available, then an explicit Cursor-documented per-model default, then `0` for unknown models. Output metadata remains conservative.
 
 ## Modes
 
@@ -84,7 +137,7 @@ The loopback proxy binds to `127.0.0.1`, rejects browser `Origin` requests and n
 
 ## Known development limitations
 
-- Live authenticated SDK/OpenCode end-to-end testing still requires a Cursor SDK login on the test machine.
+- Real image inference, persistent SDK resume, and post-fix usage display have not been re-tested with Cursor inference on this branch.
 - Account-wide subscription quota/remaining-plan telemetry is not available through the documented SDK surface used here.
 - PDF input is not advertised.
 - This rewrite has not been submitted upstream; see the repository RFC discussion before any PR is created.
