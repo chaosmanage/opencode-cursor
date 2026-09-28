@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    "@openchamber/opencode-cursor@2.4.0"
+  "plugins": [
+    "../dist/index.js"
   ]
 }

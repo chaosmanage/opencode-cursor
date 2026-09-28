@@ -2,8 +2,6 @@
 
 Cursor models in OpenCode through Cursor's official TypeScript SDK.
 
-> Current branch status: SDK rewrite under development. This branch is not an upstream release.
-
 ## Architecture
 
 ```text
@@ -23,18 +21,26 @@ For normal agent turns the plugin offers Cursor only the SDK `mcp` capability an
 
 Ambient Cursor setting sources are disabled by default, so project/user Cursor MCP configuration is not implicitly loaded into the provider.
 
-## Install this branch
+## Install
 
-This SDK rewrite is on the fork's `sdk-rewrite` branch and has not been released upstream. Install it from a local checkout on the machine running the OpenCode server:
+Requirements: OpenCode 2, Node.js 22.13 or newer, and a Cursor account with Agent SDK access. Run installation and sign-in as the same operating-system user that runs the OpenCode server.
+
+After OpenChamber publishes a release containing this SDK integration, install the plugin with:
 
 ```bash
-git clone --branch sdk-rewrite https://github.com/chaosmanage/opencode-cursor.git
-cd opencode-cursor
+opencode plugin add @openchamber/opencode-cursor
+opencode service restart
+opencode plugin list
+```
+
+The currently published `@openchamber/opencode-cursor@2.5.1` package contains the previous integration. To test this SDK rewrite before its release, build the PR checkout on the OpenCode server machine:
+
+```bash
 npm ci
 npm run build
 ```
 
-In the project where you use OpenCode, add the built entrypoint to `opencode.json` (replace the path with your checkout's absolute path):
+In the project where you use OpenCode, add the built entrypoint to `opencode.json` (replace the path with the PR checkout's absolute path):
 
 ```json
 {
@@ -43,7 +49,7 @@ In the project where you use OpenCode, add the built entrypoint to `opencode.jso
 }
 ```
 
-Use OpenCode 2's plural `plugins` key ([plugin configuration](https://opencode.ai/v2/docs/plugins)). Do not install the published `@openchamber/opencode-cursor@2.5.1` package for this branch: the fork's built checkout is the tested artifact. Start or restart OpenCode in that project after changing the config, then check `opencode plugin list`.
+Use OpenCode 2's plural `plugins` key ([plugin configuration](https://opencode.ai/v2/docs/plugins)). Start or restart OpenCode in that project after changing the config, then check `opencode plugin list`. When switching to the published package, remove the local path from `plugins` so the plugin loads only once.
 
 ## Sign in with the Cursor SDK
 
@@ -55,7 +61,15 @@ opencode auth login cursor --method cursor-sdk
 
 Open the Cursor URL shown by OpenCode, complete sign-in in your browser, and return to the terminal. The plugin calls `Cursor.auth.login({ openBrowser: false, onLoginUrl })`; the official SDK stores its credential and OpenCode stores only a non-secret integration marker. If the SDK is already signed in, this command completes without a new browser login. Check the available Cursor models with `opencode models`.
 
-If OpenCode cannot present the browser URL, you can sign in directly with the SDK **from the checkout directory**:
+If OpenCode cannot present the browser URL, you can sign in directly with the SDK. Run the following from the source checkout, where `npm ci` installed `@cursor/sdk`. If you installed only the published plugin, first create a small SDK command directory:
+
+```bash
+mkdir -p ~/.local/share/opencode-cursor-sdk-auth
+npm install --prefix ~/.local/share/opencode-cursor-sdk-auth @cursor/sdk@1.0.32
+cd ~/.local/share/opencode-cursor-sdk-auth
+```
+
+Then run:
 
 ```bash
 node --input-type=module -e 'import { Cursor } from "@cursor/sdk"; await Cursor.auth.login({ openBrowser: false, onLoginUrl: (url) => console.log(url) }); console.log("Cursor SDK signed in")'
@@ -65,7 +79,7 @@ opencode auth login cursor --method cursor-sdk
 
 The first command prints the official URL and waits for browser sign-in; the second records OpenCode's integration marker. The SDK's default credential store is `~/.cursor/sdk/auth.json`. Keep that file private; the plugin does not read or copy it.
 
-To check SDK sign-in status without printing a credential, run this from the checkout directory:
+To check SDK sign-in status without printing a credential, run this from the source checkout or SDK command directory:
 
 ```bash
 node --input-type=module -e 'import { Cursor } from "@cursor/sdk"; console.log((await Cursor.auth.status()).status)'
@@ -73,12 +87,12 @@ node --input-type=module -e 'import { Cursor } from "@cursor/sdk"; console.log((
 
 ### Sign out
 
-Remove the OpenCode marker, then forget the SDK's local credential:
+Remove the OpenCode marker, then forget the SDK's local credential. Run the Node command from the source checkout or SDK command directory above:
 
 ```bash
 cd /absolute/path/to/your-opencode-project
 opencode auth logout cursor
-cd /absolute/path/to/opencode-cursor
+cd /absolute/path/to/source-checkout-or-sdk-command-directory
 node --input-type=module -e 'import { Cursor } from "@cursor/sdk"; await Cursor.auth.logout(); console.log((await Cursor.auth.status()).status)'
 ```
 
@@ -113,7 +127,7 @@ This plugin does **not** scrape Cursor's dashboard and does not claim to know ac
 - OpenCode 2.x plugin host
 - Node.js >= 22.13
 - Cursor account that can use the Agent SDK
-- `@cursor/sdk` 1.0.32 for this development branch
+- `@cursor/sdk` 1.0.32 is the SDK version used by this integration
 
 ## Development
 
@@ -135,12 +149,11 @@ Automated checks reject first-party runtime references to the removed private in
 
 The loopback proxy binds to `127.0.0.1`, rejects browser `Origin` requests and non-loopback host headers, and cancels an active Cursor run when the OpenCode HTTP client disconnects.
 
-## Known development limitations
+## Known limitations
 
-- Real image inference, persistent SDK resume, and post-fix usage display have not been re-tested with Cursor inference on this branch.
+- Real image inference, persistent SDK resume, and post-fix usage display have not yet been verified end to end.
 - Account-wide subscription quota/remaining-plan telemetry is not available through the documented SDK surface used here.
 - PDF input is not advertised.
-- This rewrite has not been submitted upstream; see the repository RFC discussion before any PR is created.
 
 ## License
 
