@@ -105,7 +105,6 @@ export function buildAgentOptions(
       cwd,
       settingSources: [],
       customTools,
-      sandboxOptions: { enabled: true },
     },
   };
 }
@@ -430,7 +429,7 @@ async function handleChat(req: IncomingMessage): Promise<Response> {
     const agent = await cursorSdk().createAgent({
       model: selection,
       tools: [],
-      local: { cwd, settingSources: [], sandboxOptions: { enabled: true } },
+      local: { cwd, settingSources: [] },
     });
     try {
       const costBaseline = await readAgentCost(agent);

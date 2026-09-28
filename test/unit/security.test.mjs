@@ -9,7 +9,7 @@ test("agent options expose only custom MCP capability", () => {
   const options = buildAgentOptions("/tmp/project", { id: "model" }, "agent", customTools);
   assert.deepEqual(options.tools, ["mcp"]);
   assert.deepEqual(options.local.settingSources, []);
-  assert.equal(options.local.sandboxOptions.enabled, true);
+  assert.equal(options.local.sandboxOptions, undefined);
   assert.equal(options.local.customTools, customTools);
 });
 

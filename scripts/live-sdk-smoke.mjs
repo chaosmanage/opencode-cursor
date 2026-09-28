@@ -26,7 +26,6 @@ if (status.status !== "logged-in") {
     local: {
       cwd: process.cwd(),
       settingSources: [],
-      sandboxOptions: { enabled: true },
     },
   });
 
