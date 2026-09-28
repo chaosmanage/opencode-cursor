@@ -1,0 +1,64 @@
+import type { TokenUsage } from "@cursor/sdk";
+
+export interface OpenAIUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+  completion_tokens_details?: { reasoning_tokens?: number };
+}
+
+export function toOpenAIUsage(usage: TokenUsage | undefined): OpenAIUsage | undefined {
+  if (!usage) return undefined;
+  const prompt = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+  const details: NonNullable<OpenAIUsage["prompt_tokens_details"]> = {};
+  if (usage.cacheReadTokens) details.cached_tokens = usage.cacheReadTokens;
+  if (usage.cacheWriteTokens) details.cache_write_tokens = usage.cacheWriteTokens;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: usage.outputTokens,
+    total_tokens: prompt + usage.outputTokens,
+    ...(Object.keys(details).length ? { prompt_tokens_details: details } : {}),
+    ...(usage.reasoningTokens
+      ? { completion_tokens_details: { reasoning_tokens: usage.reasoningTokens } }
+      : {}),
+  };
+}
+
+function value(v: number | undefined): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+export function usageGrowth(current: OpenAIUsage, previous?: OpenAIUsage): OpenAIUsage | undefined {
+  if (!previous) return current;
+  const prompt = Math.max(0, current.prompt_tokens - previous.prompt_tokens);
+  const completion = Math.max(0, current.completion_tokens - previous.completion_tokens);
+  const cached = Math.max(
+    0,
+    value(current.prompt_tokens_details?.cached_tokens) -
+      value(previous.prompt_tokens_details?.cached_tokens),
+  );
+  const cacheWrite = Math.max(
+    0,
+    value(current.prompt_tokens_details?.cache_write_tokens) -
+      value(previous.prompt_tokens_details?.cache_write_tokens),
+  );
+  const reasoning = Math.max(
+    0,
+    value(current.completion_tokens_details?.reasoning_tokens) -
+      value(previous.completion_tokens_details?.reasoning_tokens),
+  );
+  if (!(prompt || completion || cached || cacheWrite || reasoning)) return undefined;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    ...(cached || cacheWrite
+      ? { prompt_tokens_details: {
+          ...(cached ? { cached_tokens: cached } : {}),
+          ...(cacheWrite ? { cache_write_tokens: cacheWrite } : {}),
+        } }
+      : {}),
+    ...(reasoning ? { completion_tokens_details: { reasoning_tokens: reasoning } } : {}),
+  };
+}

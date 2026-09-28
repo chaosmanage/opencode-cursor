@@ -1,6 +1,6 @@
 export const PROVIDER_ID = "cursor";
 export const PROVIDER_NAME = "Cursor";
-export const OPENAI_COMPATIBLE_PACKAGE = "@ai-sdk/openai-compatible";
+export const OPENAI_COMPATIBLE_PACKAGE = "@opencode/ai/providers/openai-compatible";
 
 export const SELECTION_HEADER = "x-opencode-cursor-selection";
 export const DIRECTORY_HEADER = "x-opencode-cursor-directory";
